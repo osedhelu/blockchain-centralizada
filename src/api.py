@@ -29,10 +29,18 @@ def blockchain_service():
 
 app = FastAPI(title="Blockchain Centralizada API", version="1.0.0")
 
-# Montar archivos estáticos para el explorador
+# Montar archivos estáticos para el explorador legacy
 static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Montar archivos estáticos del frontend Next.js
+frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "out")
+if os.path.exists(frontend_dir):
+    # Servir archivos estáticos de Next.js (_next contiene JS, CSS, etc.)
+    next_static_dir = os.path.join(frontend_dir, "_next")
+    if os.path.exists(next_static_dir):
+        app.mount("/_next", StaticFiles(directory=next_static_dir), name="nextjs_static")
 
 
 # Dependencia para obtener el usuario autenticado
@@ -90,9 +98,7 @@ class AuthenticatedTransactionRequest(BaseModel):
     amount: float
 
 
-@app.get("/")
-async def root():
-    return {"message": "Blockchain Centralizada API", "version": "1.0.0"}
+# Root endpoint movido más abajo para servir el frontend
 
 
 @app.get("/chain")
@@ -298,11 +304,24 @@ async def get_transaction_by_hash(tx_hash: str):
 
 @app.get("/explorer")
 async def explorer():
-    """Sirve el explorador web"""
+    """Sirve el explorador web (legacy HTML)"""
     explorer_path = os.path.join(os.path.dirname(__file__), "..", "static", "explorer.html")
     if os.path.exists(explorer_path):
         return FileResponse(explorer_path)
     raise HTTPException(status_code=404, detail="Explorador no encontrado")
+
+
+@app.get("/")
+async def root():
+    """Sirve el frontend de Next.js"""
+    frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "out", "index.html")
+    if os.path.exists(frontend_path):
+        return FileResponse(frontend_path)
+    # Fallback al explorador HTML si Next.js no está construido
+    explorer_path = os.path.join(os.path.dirname(__file__), "..", "static", "explorer.html")
+    if os.path.exists(explorer_path):
+        return FileResponse(explorer_path)
+    return {"message": "Blockchain Centralizada API", "version": "1.0.0", "frontend": "Next.js no construido aún. Ejecuta: cd frontend && npm install && npm run build"}
 
 
 @app.post("/auth/login")
@@ -640,6 +659,29 @@ async def batch_create_transactions(batch_request: BatchTransactionRequest, asyn
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/{path:path}")
+async def serve_frontend(path: str):
+    """Sirve archivos estáticos del frontend Next.js para rutas no-API"""
+    # Esta ruta catch-all debe estar al final, después de todas las rutas de API
+    # Si llegamos aquí, significa que ninguna ruta de API coincidió
+    
+    # Intentar servir desde el frontend construido
+    frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "out")
+    file_path = os.path.join(frontend_dir, path)
+    
+    # Si es un directorio o no existe, servir index.html (SPA routing)
+    if not os.path.exists(file_path) or os.path.isdir(file_path):
+        index_path = os.path.join(frontend_dir, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+    
+    # Si existe el archivo, servirlo
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        return FileResponse(file_path)
+    
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 def run_api():

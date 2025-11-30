@@ -85,6 +85,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./static:/app/static
+      - ./frontend/out:/app/frontend/out:ro
       - .:/app/root:ro
     networks:
       - blockchain_network
