@@ -5,6 +5,7 @@ import Explorer from './components/Explorer'
 import Wallet from './components/Wallet'
 import Blocks from './components/Blocks'
 import MetaMask from './components/MetaMask'
+import FinancialReport from './components/FinancialReport'
 
 const API_BASE = typeof window !== 'undefined' ? window.location.origin : ''
 
@@ -42,6 +43,12 @@ export default function Home() {
               >
                 MetaMask
               </div>
+              <div 
+                className={`tab ${activeTab === 'financial' ? 'active' : ''}`}
+                onClick={() => setActiveTab('financial')}
+              >
+                Reporte Financiero
+              </div>
             </div>
           </div>
           <div id="wallet-status" style={{ marginLeft: '20px', padding: '8px 16px', background: 'rgba(240, 185, 11, 0.2)', border: '1px solid #f0b90b', borderRadius: '6px', fontSize: '12px' }}>
@@ -55,6 +62,7 @@ export default function Home() {
         {activeTab === 'wallet' && <Wallet apiBase={API_BASE} />}
         {activeTab === 'blocks' && <Blocks apiBase={API_BASE} />}
         {activeTab === 'metamask' && <MetaMask apiBase={API_BASE} />}
+        {activeTab === 'financial' && <FinancialReport apiBase={API_BASE} />}
       </div>
     </div>
   )

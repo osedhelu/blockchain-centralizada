@@ -219,6 +219,129 @@ class BlockchainService:
             'pending_transactions': len(pending),
             'is_valid': self.is_chain_valid()
         }
+    
+    def get_financial_report(self) -> dict:
+        """
+        Genera un reporte financiero completo de la blockchain
+        """
+        from src.utils import format_amount, from_wei
+        from collections import defaultdict
+        from datetime import datetime, timedelta
+        
+        chain = self.get_chain()  # Recargar desde BD
+        
+        # Estadísticas generales
+        total_blocks = len(chain)
+        total_transactions = sum(len(block.transactions) for block in chain)
+        
+        # Calcular volumen total transaccionado
+        total_volume_wei = 0
+        total_rewards_wei = 0
+        unique_addresses = set()
+        address_balances = defaultdict(int)
+        transactions_by_day = defaultdict(int)
+        volume_by_day = defaultdict(int)
+        
+        # Procesar todos los bloques
+        for block in chain:
+            block_date = block.timestamp.date() if isinstance(block.timestamp, datetime) else block.timestamp
+            if isinstance(block_date, str):
+                try:
+                    block_date = datetime.fromisoformat(block_date).date()
+                except:
+                    block_date = datetime.now().date()
+            
+            for tx in block.transactions:
+                # Contar direcciones únicas
+                if tx.sender and tx.sender != "Sistema":
+                    unique_addresses.add(tx.sender.lower())
+                if tx.recipient:
+                    unique_addresses.add(tx.recipient.lower())
+                
+                # Calcular volumen (solo transacciones entre direcciones, no recompensas)
+                if tx.sender != "Sistema":
+                    total_volume_wei += tx.amount
+                    volume_by_day[block_date] += tx.amount
+                else:
+                    total_rewards_wei += tx.amount
+                
+                # Contar transacciones por día
+                transactions_by_day[block_date] += 1
+                
+                # Calcular balances
+                if tx.sender and tx.sender != "Sistema":
+                    address_balances[tx.sender.lower()] -= tx.amount
+                if tx.recipient:
+                    address_balances[tx.recipient.lower()] += tx.amount
+        
+        # Top direcciones por balance
+        top_addresses = sorted(
+            [(addr, balance) for addr, balance in address_balances.items() if balance > 0],
+            key=lambda x: x[1],
+            reverse=True
+        )[:10]
+        
+        # Estadísticas de minería
+        mining_rewards_count = sum(
+            1 for block in chain
+            for tx in block.transactions
+            if tx.sender == "Sistema"
+        )
+        
+        # Últimas transacciones (últimas 10)
+        recent_transactions = []
+        for block in reversed(chain[-5:]):  # Últimos 5 bloques
+            for tx in block.transactions:
+                recent_transactions.append({
+                    'hash': tx.calculate_hash(),
+                    'sender': tx.sender,
+                    'recipient': tx.recipient,
+                    'amount': tx.amount,
+                    'amount_formatted': format_amount(tx.amount),
+                    'block_index': block.index,
+                    'timestamp': block.timestamp.isoformat() if isinstance(block.timestamp, datetime) else str(block.timestamp)
+                })
+                if len(recent_transactions) >= 10:
+                    break
+            if len(recent_transactions) >= 10:
+                break
+        
+        # Estadísticas por período (últimos 7 días)
+        last_7_days = []
+        today = datetime.now().date()
+        for i in range(7):
+            date = today - timedelta(days=i)
+            last_7_days.append({
+                'date': date.isoformat(),
+                'transactions': transactions_by_day.get(date, 0),
+                'volume': volume_by_day.get(date, 0),
+                'volume_formatted': format_amount(volume_by_day.get(date, 0))
+            })
+        
+        return {
+            'summary': {
+                'total_blocks': total_blocks,
+                'total_transactions': total_transactions,
+                'total_volume_wei': total_volume_wei,
+                'total_volume_formatted': format_amount(total_volume_wei),
+                'total_rewards_wei': total_rewards_wei,
+                'total_rewards_formatted': format_amount(total_rewards_wei),
+                'unique_addresses': len(unique_addresses),
+                'mining_rewards_count': mining_rewards_count,
+                'average_transactions_per_block': round(total_transactions / total_blocks, 2) if total_blocks > 0 else 0
+            },
+            'top_addresses': [
+                {
+                    'address': addr,
+                    'balance': balance,
+                    'balance_formatted': format_amount(balance)
+                }
+                for addr, balance in top_addresses
+            ],
+            'recent_transactions': recent_transactions,
+            'daily_statistics': last_7_days,
+            'generated_at': datetime.now().isoformat()
+        }
 
 
 # Instancia global que se inicializará cuando se necesite

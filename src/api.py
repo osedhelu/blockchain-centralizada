@@ -662,6 +662,16 @@ async def batch_create_transactions(batch_request: BatchTransactionRequest, asyn
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/financial/report")
+async def get_financial_report():
+    """Genera un reporte financiero completo de la blockchain"""
+    try:
+        report = blockchain_service().get_financial_report()
+        return report
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/{path:path}")
 async def serve_frontend(path: str):
     """Sirve archivos estáticos del frontend Next.js para rutas no-API"""
