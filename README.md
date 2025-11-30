@@ -8,8 +8,12 @@ Sistema de blockchain centralizada desarrollado en Python que utiliza PostgreSQL
 - **Redis**: Caché para estado de la blockchain y transacciones pendientes
 - **RabbitMQ**: Sistema de mensajería para comunicación entre servicios
 - **FastAPI**: API REST para interactuar con la blockchain
+- **Celery**: Sistema de tareas asíncronas para minería y procesamiento
+- **Flower**: Interfaz web para monitorear Celery
 - **Wallets Ethereum**: Sistema de wallets con mnemonic de 12 palabras (BIP39/BIP44)
 - **Explorador Web**: Interfaz web estilo Binance para explorar la blockchain
+- **Bloque Génesis Configurable**: Sistema de asignaciones iniciales mediante `genesis.json`
+- **Precisión de 18 Decimales**: Todos los montos trabajan con 18 decimales (estándar ERC-20)
 
 ## Requisitos Previos
 
@@ -26,7 +30,17 @@ Copia el archivo `.env.example` a `.env`:
 cp .env.example .env
 ```
 
-### 2. Editar el archivo `.env`
+### 2. Configurar el Bloque Génesis (Opcional)
+
+Si deseas asignar montos iniciales a wallets específicas, crea el archivo `genesis.json`:
+
+```bash
+cp genesis.json.example genesis.json
+```
+
+Edita `genesis.json` y agrega las wallets con sus montos iniciales. Ver `README_GENESIS.md` para más detalles.
+
+### 3. Editar el archivo `.env`
 
 Abre el archivo `.env` y configura las siguientes variables según tus necesidades:
 
@@ -58,7 +72,7 @@ LOG_LEVEL=INFO
 
 **IMPORTANTE**: Cambia todas las contraseñas por valores seguros antes de desplegar en producción.
 
-### 3. Iniciar los Servicios
+### 4. Iniciar los Servicios
 
 ```bash
 docker-compose up -d
@@ -69,8 +83,10 @@ Este comando iniciará todos los servicios:
 - Redis en el puerto 6379
 - RabbitMQ en los puertos 5672 (AMQP) y 15672 (Management UI)
 - Servicio Blockchain API en el puerto 8000
+- Celery Worker para procesamiento asíncrono
+- Flower (monitoreo Celery) en el puerto 5555
 
-### 4. Verificar que los Servicios Estén Funcionando
+### 5. Verificar que los Servicios Estén Funcionando
 
 ```bash
 docker-compose ps
@@ -78,15 +94,16 @@ docker-compose ps
 
 Todos los servicios deben estar en estado "Up".
 
-### 5. Acceder a la API y Explorador
+### 6. Acceder a la API y Explorador
 
 - **API**: `http://localhost:8000`
 - **Explorador Web**: `http://localhost:8000/explorer`
+- **Flower (Celery)**: `http://localhost:5555`
 - **Documentación API**:
   - Swagger UI: `http://localhost:8000/docs`
   - ReDoc: `http://localhost:8000/redoc`
 
-### 6. Acceder a RabbitMQ Management
+### 7. Acceder a RabbitMQ Management
 
 - URL: `http://localhost:15672`
 - Usuario: El valor de `RABBITMQ_USER` en tu `.env`
@@ -285,12 +302,29 @@ python src/main.py
 - `BLOCKCHAIN_MINING_REWARD`: Recompensa por minar un bloque
 - `LOG_LEVEL`: Nivel de logging (DEBUG, INFO, WARNING, ERROR)
 
+## Bloque Génesis
+
+El sistema soporta un bloque génesis configurable mediante el archivo `genesis.json`. Este archivo permite asignar montos iniciales a wallets específicas cuando se crea la blockchain por primera vez.
+
+**Ver documentación completa**: [README_GENESIS.md](README_GENESIS.md)
+
+**Ejemplo rápido**:
+```bash
+# 1. Crear genesis.json desde el ejemplo
+cp genesis.json.example genesis.json
+
+# 2. Editar genesis.json con tus wallets y montos
+# 3. Reiniciar con volúmenes limpios para aplicar el génesis
+docker-compose down -v
+docker-compose up -d
+
 ## Notas
 
 - Los datos se persisten en volúmenes Docker, por lo que sobrevivirán a reinicios
-- La blockchain se inicializa automáticamente con un bloque génesis
+- La blockchain se inicializa automáticamente con un bloque génesis (vacío o desde `genesis.json`)
 - Las transacciones se publican en RabbitMQ para procesamiento asíncrono
 - Redis se usa para caché de estado y transacciones pendientes
+- El archivo `genesis.json` solo se aplica cuando se crea la blockchain por primera vez
 
 ## Solución de Problemas
 

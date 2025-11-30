@@ -1,0 +1,22 @@
+{
+  "genesis_allocations": [
+    {
+      "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+      "amount": "1000000000000000000000000",
+      "description": "Wallet principal del sistema (1,000,000 tokens)"
+    },
+    {
+      "address": "0x8ba1f109551bD432803012645Hac136c22C1779",
+      "amount": "500000123456789012345678",
+      "description": "Wallet de desarrollo (500,000.123456789012345678 tokens)"
+    },
+    {
+      "address": "0x1234567890123456789012345678901234567890",
+      "amount": "250000000000000000000000",
+      "description": "Wallet de reserva (250,000 tokens)"
+    }
+  ],
+  "genesis_timestamp": null,
+  "genesis_note": "Bloque génesis con asignaciones iniciales. Los montos están en wei (enteros sin decimales). Puedes usar números enteros grandes o decimales (ej: 1.5 = 1500000000000000000). El sistema convierte automáticamente a wei."
+}
+

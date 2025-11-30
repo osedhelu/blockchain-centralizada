@@ -3,6 +3,7 @@ from src.database import db
 from src.redis_client import redis_client
 from src.rabbitmq_client import rabbitmq_client
 from src.config import settings
+from src.genesis import genesis_loader
 from typing import List, Optional
 
 
@@ -22,15 +23,29 @@ class BlockchainService:
                 self.blockchain.chain = blocks
                 print(f"Blockchain cargada desde BD: {len(blocks)} bloques")
             else:
+                # Cargar transacciones del génesis
+                genesis_loader.load_genesis()
+                genesis_transactions = genesis_loader.get_genesis_transactions()
+                
+                # Crear blockchain con transacciones del génesis
                 self.blockchain = Blockchain(
                     difficulty=settings.BLOCKCHAIN_DIFFICULTY,
-                    mining_reward=settings.BLOCKCHAIN_MINING_REWARD
+                    mining_reward=settings.BLOCKCHAIN_MINING_REWARD,
+                    genesis_transactions=genesis_transactions
                 )
+                
                 genesis_block = self.blockchain.chain[0]
+                genesis_timestamp = genesis_loader.get_genesis_timestamp()
+                if genesis_timestamp:
+                    genesis_block.timestamp = genesis_timestamp
+                    genesis_block.hash = genesis_block.calculate_hash()
+                
                 db.save_block(genesis_block)
-                print("Blockchain nueva creada")
+                print(f"✓ Blockchain nueva creada con {len(genesis_transactions)} transacciones génesis")
         except Exception as e:
             print(f"Error inicializando blockchain: {e}")
+            import traceback
+            traceback.print_exc()
             self.blockchain = Blockchain(
                 difficulty=settings.BLOCKCHAIN_DIFFICULTY,
                 mining_reward=settings.BLOCKCHAIN_MINING_REWARD
@@ -38,10 +53,13 @@ class BlockchainService:
     
     def add_transaction(self, sender: str, recipient: str, amount: float) -> bool:
         try:
+            from src.utils import parse_amount
+            # amount puede venir como float (ej: 1.5) y se convierte a wei (entero)
+            amount_wei = parse_amount(amount)
             transaction = Transaction(
                 sender=sender,
                 recipient=recipient,
-                amount=amount
+                amount=amount_wei
             )
             self.blockchain.add_transaction(transaction)
             redis_client.cache_pending_transactions(self.blockchain.pending_transactions)
@@ -68,7 +86,8 @@ class BlockchainService:
             print(f"Error minando transacciones: {e}")
             return None
     
-    def get_balance(self, address: str) -> float:
+    def get_balance(self, address: str) -> int:
+        """Retorna el balance en wei (entero sin decimales)"""
         return self.blockchain.get_balance(address)
     
     def get_chain(self) -> List[Block]:

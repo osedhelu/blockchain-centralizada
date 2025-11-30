@@ -1,26 +1,32 @@
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
+from decimal import Decimal
 import hashlib
 import json
+from src.utils import parse_amount, format_amount
 
 
 class Transaction(BaseModel):
     sender: str
     recipient: str
-    amount: float
+    amount: int  # Monto en wei (entero sin decimales)
     timestamp: Optional[datetime] = None
     
     def __init__(self, **data):
         if 'timestamp' not in data or data['timestamp'] is None:
             data['timestamp'] = datetime.now()
+        # Convertir el monto a wei (entero)
+        if 'amount' in data:
+            data['amount'] = parse_amount(data['amount'])
         super().__init__(**data)
     
     def to_dict(self) -> dict:
         return {
             'sender': self.sender,
             'recipient': self.recipient,
-            'amount': self.amount,
+            'amount': self.amount,  # Monto en wei (entero)
+            'amount_formatted': format_amount(self.amount),  # Formato legible
             'timestamp': self.timestamp.isoformat() if self.timestamp else None
         }
 
@@ -56,20 +62,24 @@ class Blockchain(BaseModel):
     difficulty: int
     mining_reward: float
     
-    def __init__(self, difficulty: int = 4, mining_reward: float = 100.0):
+    def __init__(self, difficulty: int = 4, mining_reward: float = 100.0, genesis_transactions: List[Transaction] = None):
         super().__init__(
             chain=[],
             pending_transactions=[],
             difficulty=difficulty,
             mining_reward=mining_reward
         )
-        self.create_genesis_block()
+        self.create_genesis_block(genesis_transactions)
     
-    def create_genesis_block(self) -> None:
+    def create_genesis_block(self, genesis_transactions: List[Transaction] = None) -> None:
+        """Crea el bloque génesis con transacciones opcionales"""
+        if genesis_transactions is None:
+            genesis_transactions = []
+        
         genesis_block = Block(
             index=0,
             timestamp=datetime.now(),
-            transactions=[],
+            transactions=genesis_transactions,
             previous_hash="0",
             hash="",
             nonce=0
@@ -84,10 +94,13 @@ class Blockchain(BaseModel):
         self.pending_transactions.append(transaction)
     
     def mine_pending_transactions(self, mining_reward_address: str) -> None:
+        # Convertir mining_reward a wei
+        from src.utils import to_wei
+        reward_wei = to_wei(self.mining_reward)
         reward_tx = Transaction(
             sender="Sistema",
             recipient=mining_reward_address,
-            amount=self.mining_reward
+            amount=reward_wei
         )
         self.pending_transactions.append(reward_tx)
         
@@ -104,8 +117,11 @@ class Blockchain(BaseModel):
         self.chain.append(block)
         self.pending_transactions = []
     
-    def get_balance(self, address: str) -> float:
-        balance = 0.0
+    def get_balance(self, address: str) -> int:
+        """
+        Retorna el balance en wei (entero sin decimales)
+        """
+        balance = 0
         for block in self.chain:
             for transaction in block.transactions:
                 if transaction.sender == address:

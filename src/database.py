@@ -3,6 +3,7 @@ from psycopg2.extras import RealDictCursor
 from psycopg2 import pool
 from contextlib import contextmanager
 from src.config import settings
+from src.utils import parse_amount
 import json
 from datetime import datetime
 from typing import List, Optional
@@ -61,7 +62,7 @@ class Database:
                         block_index INTEGER,
                         sender VARCHAR(255) NOT NULL,
                         recipient VARCHAR(255) NOT NULL,
-                        amount DECIMAL(18, 8) NOT NULL,
+                        amount NUMERIC(78, 0) NOT NULL,
                         timestamp TIMESTAMP NOT NULL,
                         FOREIGN KEY (block_index) REFERENCES blocks(index) ON DELETE CASCADE
                     );
@@ -101,7 +102,7 @@ class Database:
                                 block.index,
                                 tx.sender,
                                 tx.recipient,
-                                tx.amount,
+                                int(tx.amount),  # Asegurar que es entero
                                 tx.timestamp
                             ))
                         return True
@@ -133,7 +134,7 @@ class Database:
                             Transaction(
                                 sender=tx['sender'],
                                 recipient=tx['recipient'],
-                                amount=float(tx['amount']),
+                                amount=int(tx['amount']),  # Ya está en wei (entero)
                                 timestamp=tx['timestamp']
                             )
                             for tx in tx_rows
@@ -177,7 +178,7 @@ class Database:
                         Transaction(
                             sender=tx['sender'],
                             recipient=tx['recipient'],
-                            amount=float(tx['amount']),
+                            amount=float(parse_amount(str(tx['amount']))),
                             timestamp=tx['timestamp']
                         )
                         for tx in tx_rows
@@ -219,7 +220,7 @@ class Database:
                         Transaction(
                             sender=tx['sender'],
                             recipient=tx['recipient'],
-                            amount=float(tx['amount']),
+                            amount=float(parse_amount(str(tx['amount']))),
                             timestamp=tx['timestamp']
                         )
                         for tx in tx_rows

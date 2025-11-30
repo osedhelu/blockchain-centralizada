@@ -87,9 +87,64 @@ services:
     volumes:
       - ./src:/app/src
       - ./static:/app/static
+      - ./genesis.json:/app/genesis.json
     networks:
       - blockchain_network
     command: python src/main.py
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: blockchain_celery_worker
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-blockchain_db}
+      POSTGRES_USER: ${POSTGRES_USER:-blockchain_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-blockchain_pass}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USER: ${RABBITMQ_USER:-rabbitmq_user}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq_pass}
+      BLOCKCHAIN_DIFFICULTY: ${BLOCKCHAIN_DIFFICULTY:-4}
+      BLOCKCHAIN_MINING_REWARD: ${BLOCKCHAIN_MINING_REWARD:-100}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      blockchain:
+        condition: service_started
+    volumes:
+      - ./src:/app/src
+      - ./genesis.json:/app/genesis.json
+    networks:
+      - blockchain_network
+    command: celery -A src.celery_app worker --loglevel=info --concurrency=4 --queues=default,mining,transactions,validation,cache
+
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: blockchain_flower
+    environment:
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-rabbitmq_user}:${RABBITMQ_PASSWORD:-rabbitmq_pass}@rabbitmq:${RABBITMQ_PORT:-5672}//
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-redis_pass}@redis:${REDIS_PORT:-6379}/0
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    depends_on:
+      - rabbitmq
+      - redis
+      - celery_worker
+    networks:
+      - blockchain_network
+    command: celery -A src.celery_app flower --port=5555
 
 volumes:
   postgres_data:

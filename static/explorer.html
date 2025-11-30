@@ -404,6 +404,28 @@
 
     <script>
         const API_BASE = window.location.origin;
+        
+        // Función para convertir wei (entero) a formato legible con 18 decimales
+        function formatWei(wei) {
+            if (!wei) return '0';
+            const weiStr = wei.toString();
+            if (weiStr === '0') return '0';
+            
+            // Si el número es menor que 10^18, agregar ceros al inicio
+            const weiBigInt = BigInt(weiStr);
+            const divisor = BigInt('1000000000000000000'); // 10^18
+            
+            const wholePart = weiBigInt / divisor;
+            const fractionalPart = weiBigInt % divisor;
+            
+            if (fractionalPart === 0n) {
+                return wholePart.toString();
+            }
+            
+            // Formatear la parte fraccional con 18 dígitos, eliminando ceros finales
+            const fractionalStr = fractionalPart.toString().padStart(18, '0').replace(/0+$/, '');
+            return fractionalStr ? `${wholePart}.${fractionalStr}` : wholePart.toString();
+        }
 
         function switchTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -451,7 +473,7 @@
                         <div class="stat-label">Dirección</div>
                         <div class="wallet-address">${balance.address}</div>
                         <div class="stat-label">Balance</div>
-                        <div class="balance-display">${balance.balance.toFixed(8)}</div>
+                        <div class="balance-display">${balance.balance_formatted || formatWei(balance.balance)}</div>
                         <div class="stat-label">Total de Transacciones</div>
                         <div class="stat-value">${transactions.count}</div>
                     </div>
@@ -517,7 +539,7 @@
                             <div class="stat-label">Dirección</div>
                             <div class="wallet-address">${data.wallet.address}</div>
                             <div class="stat-label">Balance</div>
-                            <div class="balance-display">${data.wallet.balance.toFixed(8)}</div>
+                            <div class="balance-display">${formatWei(data.wallet.balance)}</div>
                             <div class="stat-label">Ruta de Derivación</div>
                             <div class="wallet-address">${data.wallet.derivation_path}</div>
                         </div>
@@ -545,7 +567,7 @@
                         <div class="stat-label">Dirección</div>
                         <div class="wallet-address">${data.address}</div>
                         <div class="stat-label">Balance</div>
-                        <div class="balance-display">${data.balance.toFixed(8)}</div>
+                        <div class="balance-display">${data.balance_formatted || formatWei(data.balance)}</div>
                     </div>
                 `;
             } catch (error) {
@@ -578,7 +600,7 @@
                     html += `
                         <div class="transaction-item">
                             <div>
-                                <div class="tx-amount ${amountClass}">${sign}${tx.amount.toFixed(8)}</div>
+                                <div class="tx-amount ${amountClass}">${sign}${formatWei(tx.amount)}</div>
                                 <div class="tx-details">
                                     ${tx.type === 'sent' ? 'Para: ' + tx.recipient : 'De: ' + tx.sender}
                                     <br>Bloque: ${tx.block_index} | ${new Date(tx.timestamp).toLocaleString()}

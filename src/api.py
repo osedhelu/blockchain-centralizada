@@ -2,10 +2,19 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 from src.blockchain_service import blockchain_service
 from src.models import Transaction, Block
 from src.wallet import wallet_manager
+from src.utils import parse_amount, format_amount
+from src.celery_app import celery_app
+from src.tasks import (
+    mine_block_task,
+    process_transaction_task,
+    validate_chain_task,
+    update_cache_task,
+    batch_process_transactions_task
+)
 import uvicorn
 from src.config import settings
 import os
@@ -86,20 +95,34 @@ async def validate_chain():
 
 
 @app.post("/transactions/new")
-async def create_transaction(transaction: TransactionRequest):
+async def create_transaction(transaction: TransactionRequest, async_mode: bool = False):
+    """
+    Crea una nueva transacción
+    - async_mode=False: Procesa de forma síncrona (default)
+    - async_mode=True: Procesa de forma asíncrona con Celery
+    """
+    """
+    Crea una nueva transacción
+    async_mode: Si es True, procesa la transacción de forma asíncrona con Celery
+    """
     try:
-        if transaction.amount <= 0:
+        # Validar y convertir el monto a wei (entero)
+        amount_wei = parse_amount(transaction.amount)
+        
+        if amount_wei <= 0:
             raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
         
-        success = blockchain_service.add_transaction(
-            transaction.sender,
-            transaction.recipient,
-            transaction.amount
-        )
-        
-        if success:
+        if async_mode:
+            # Procesar de forma asíncrona con Celery
+            task = process_transaction_task.delay(
+                transaction.sender,
+                transaction.recipient,
+                float(transaction.amount)
+            )
             return {
-                "message": "Transacción agregada exitosamente",
+                "message": "Transacción en proceso (modo asíncrono)",
+                "task_id": task.id,
+                "status": "PENDING",
                 "transaction": {
                     "sender": transaction.sender,
                     "recipient": transaction.recipient,
@@ -107,7 +130,24 @@ async def create_transaction(transaction: TransactionRequest):
                 }
             }
         else:
-            raise HTTPException(status_code=500, detail="Error al agregar transacción")
+            # Procesar de forma síncrona (comportamiento original)
+            success = blockchain_service.add_transaction(
+                transaction.sender,
+                transaction.recipient,
+                float(transaction.amount)
+            )
+            
+            if success:
+                return {
+                    "message": "Transacción agregada exitosamente",
+                    "transaction": {
+                        "sender": transaction.sender,
+                        "recipient": transaction.recipient,
+                        "amount": transaction.amount
+                    }
+                }
+            else:
+                raise HTTPException(status_code=500, detail="Error al agregar transacción")
     except HTTPException:
         raise
     except Exception as e:
@@ -127,26 +167,42 @@ async def get_pending_transactions():
 
 
 @app.post("/mine")
-async def mine_block(mining_request: MiningRequest):
+async def mine_block(mining_request: MiningRequest, async_mode: bool = True):
+    """
+    Mina un bloque con las transacciones pendientes
+    - async_mode=True: Mina de forma asíncrona con Celery (default, recomendado)
+    - async_mode=False: Mina de forma síncrona (puede tardar mucho tiempo)
+    """
     try:
-        block = blockchain_service.mine_pending_transactions(
-            mining_request.mining_reward_address
-        )
-        
-        if block:
+        if async_mode:
+            # Minar de forma asíncrona con Celery
+            task = mine_block_task.delay(mining_request.mining_reward_address)
             return {
-                "message": "Bloque minado exitosamente",
-                "block": {
-                    "index": block.index,
-                    "timestamp": block.timestamp.isoformat(),
-                    "transactions": [tx.to_dict() for tx in block.transactions],
-                    "previous_hash": block.previous_hash,
-                    "hash": block.hash,
-                    "nonce": block.nonce
-                }
+                "message": "Minería iniciada (modo asíncrono)",
+                "task_id": task.id,
+                "status": "PENDING",
+                "mining_reward_address": mining_request.mining_reward_address
             }
         else:
-            raise HTTPException(status_code=500, detail="Error al minar bloque")
+            # Minar de forma síncrona (comportamiento original)
+            block = blockchain_service.mine_pending_transactions(
+                mining_request.mining_reward_address
+            )
+            
+            if block:
+                return {
+                    "message": "Bloque minado exitosamente",
+                    "block": {
+                        "index": block.index,
+                        "timestamp": block.timestamp.isoformat(),
+                        "transactions": [tx.to_dict() for tx in block.transactions],
+                        "previous_hash": block.previous_hash,
+                        "hash": block.hash,
+                        "nonce": block.nonce
+                    }
+                }
+            else:
+                raise HTTPException(status_code=500, detail="Error al minar bloque")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -154,8 +210,12 @@ async def mine_block(mining_request: MiningRequest):
 @app.get("/balance/{address}")
 async def get_balance(address: str):
     try:
-        balance = blockchain_service.get_balance(address)
-        return {"address": address, "balance": balance}
+        balance_wei = blockchain_service.get_balance(address)  # Balance en wei (entero)
+        return {
+            "address": address,
+            "balance": balance_wei,  # Balance en wei (entero)
+            "balance_formatted": format_amount(balance_wei)  # Formato legible con decimales
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -238,10 +298,11 @@ async def get_wallet_balance(address: str):
     try:
         if not wallet_manager.verify_address(address):
             raise HTTPException(status_code=400, detail="Dirección inválida")
-        balance = blockchain_service.get_balance(address)
+        balance_wei = blockchain_service.get_balance(address)  # Balance en wei (entero)
         return {
             "address": address,
-            "balance": balance
+            "balance": balance_wei,  # Balance en wei (entero)
+            "balance_formatted": format_amount(balance_wei)  # Formato legible con decimales
         }
     except HTTPException:
         raise
@@ -269,6 +330,7 @@ async def get_address_transactions(address: str):
                         "sender": tx.sender,
                         "recipient": tx.recipient,
                         "amount": tx.amount,
+                        "amount_formatted": format_amount(tx.amount),
                         "type": "sent" if tx.sender == address else "received"
                     })
         
@@ -279,6 +341,121 @@ async def get_address_transactions(address: str):
         }
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Endpoints de Celery ====================
+
+@app.get("/tasks/{task_id}")
+async def get_task_status(task_id: str):
+    """Obtiene el estado de una tarea Celery"""
+    try:
+        task = celery_app.AsyncResult(task_id)
+        
+        if task.state == 'PENDING':
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': 'La tarea está esperando ser procesada'
+            }
+        elif task.state == 'PROGRESS':
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': 'La tarea está en progreso',
+                'info': task.info
+            }
+        elif task.state == 'SUCCESS':
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': 'Tarea completada exitosamente',
+                'result': task.result
+            }
+        else:
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': f'Estado: {task.state}',
+                'error': str(task.info) if task.info else None
+            }
+        
+        return response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tasks/validate-chain")
+async def validate_chain_async():
+    """Valida la cadena de forma asíncrona"""
+    try:
+        task = validate_chain_task.delay()
+        return {
+            "message": "Validación iniciada (modo asíncrono)",
+            "task_id": task.id,
+            "status": "PENDING"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tasks/update-cache")
+async def update_cache_async():
+    """Actualiza la caché de forma asíncrona"""
+    try:
+        task = update_cache_task.delay()
+        return {
+            "message": "Actualización de caché iniciada",
+            "task_id": task.id,
+            "status": "PENDING"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class BatchTransactionRequest(BaseModel):
+    transactions: List[Dict[str, str]]
+
+
+@app.post("/transactions/batch")
+async def batch_create_transactions(batch_request: BatchTransactionRequest, async_mode: bool = True):
+    """Crea múltiples transacciones en lote"""
+    try:
+        if async_mode:
+            task = batch_process_transactions_task.delay(batch_request.transactions)
+            return {
+                "message": "Procesamiento en lote iniciado (modo asíncrono)",
+                "task_id": task.id,
+                "status": "PENDING",
+                "total_transactions": len(batch_request.transactions)
+            }
+        else:
+            results = []
+            for tx in batch_request.transactions:
+                try:
+                    success = blockchain_service.add_transaction(
+                        tx['sender'],
+                        tx['recipient'],
+                        float(tx['amount'])
+                    )
+                    results.append({
+                        "success": success,
+                        "transaction": tx
+                    })
+                except Exception as e:
+                    results.append({
+                        "success": False,
+                        "transaction": tx,
+                        "error": str(e)
+                    })
+            
+            return {
+                "message": "Lote procesado",
+                "results": results,
+                "total": len(results),
+                "success_count": sum(1 for r in results if r['success'])
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
