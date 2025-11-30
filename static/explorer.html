@@ -492,8 +492,9 @@
                     <div class="stat-label">Estado:</div>
                     <div id="connection-status" class="stat-value">No conectado</div>
                 </div>
-                <button class="btn btn-primary" onclick="connectMetaMask()" id="connect-btn">Conectar MetaMask</button>
+                <button class="btn btn-primary" onclick="connectMetaMask()" id="connect-btn" disabled>Conectar MetaMask</button>
                 <button class="btn btn-secondary" onclick="disconnectMetaMask()" id="disconnect-btn" style="display: none; margin-left: 10px;">Desconectar</button>
+                <div id="connection-error" style="margin-top: 10px; display: none;"></div>
                 <div id="metamask-info" style="margin-top: 20px;"></div>
             </div>
 
@@ -533,6 +534,7 @@
         const API_BASE = window.location.origin;
         let authToken = null;
         let connectedAddress = null;
+        let isConnecting = false; // Bandera para prevenir múltiples conexiones simultáneas
 
         // Verificar si hay token guardado
         window.addEventListener('DOMContentLoaded', () => {
@@ -543,7 +545,21 @@
                 connectedAddress = savedAddress;
                 updateWalletStatus();
             }
+            
+            // Verificar si MetaMask está disponible
+            checkMetaMaskAvailable();
         });
+
+        function checkMetaMaskAvailable() {
+            if (typeof window.ethereum === 'undefined') {
+                const connectBtn = document.getElementById('connect-btn');
+                if (connectBtn) {
+                    connectBtn.disabled = true;
+                    connectBtn.textContent = 'MetaMask no instalado';
+                    connectBtn.style.opacity = '0.5';
+                }
+            }
+        }
         
         // Función para convertir wei (entero) a formato legible con 18 decimales
         function formatWei(wei) {
@@ -914,30 +930,83 @@
         }
 
         async function connectMetaMask() {
+            // Prevenir múltiples conexiones simultáneas
+            if (isConnecting) {
+                console.log('Ya hay una conexión en proceso, esperando...');
+                return;
+            }
+
             if (typeof window.ethereum === 'undefined') {
                 alert('MetaMask no está instalado. Por favor instala MetaMask para continuar.');
                 return;
             }
 
+            // Si ya está conectado, no hacer nada
+            if (connectedAddress && authToken) {
+                alert('Ya estás conectado con: ' + connectedAddress.substring(0, 6) + '...' + connectedAddress.substring(38));
+                return;
+            }
+
+            isConnecting = true;
+            const connectBtn = document.getElementById('connect-btn');
+            if (connectBtn) {
+                connectBtn.disabled = true;
+                connectBtn.textContent = 'Conectando...';
+            }
+
             try {
-                // Solicitar acceso a las cuentas
-                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                // Primero verificar si ya hay cuentas conectadas
+                let accounts = [];
+                try {
+                    accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                } catch (e) {
+                    console.log('Error obteniendo cuentas existentes:', e);
+                }
+
+                // Si no hay cuentas conectadas, solicitar acceso
+                if (!accounts || accounts.length === 0) {
+                    try {
+                        accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                    } catch (error) {
+                        // Si el usuario rechaza o hay un error, manejar apropiadamente
+                        if (error.code === 4001) {
+                            throw new Error('Conexión rechazada por el usuario');
+                        } else if (error.message && error.message.includes('already pending')) {
+                            throw new Error('Ya hay una solicitud pendiente. Por favor espera y vuelve a intentar.');
+                        } else {
+                            throw error;
+                        }
+                    }
+                }
+
                 const address = accounts[0];
 
                 if (!address) {
-                    alert('No se pudo obtener la dirección de la wallet');
-                    return;
+                    throw new Error('No se pudo obtener la dirección de la wallet');
                 }
 
                 // Obtener mensaje para firmar
                 const messageResponse = await fetch(`${API_BASE}/auth/message/${address}`);
+                if (!messageResponse.ok) {
+                    const error = await messageResponse.json();
+                    throw new Error(error.detail || 'Error obteniendo mensaje de autenticación');
+                }
                 const messageData = await messageResponse.json();
 
                 // Solicitar firma del mensaje
-                const signature = await window.ethereum.request({
-                    method: 'personal_sign',
-                    params: [messageData.message, address]
-                });
+                let signature;
+                try {
+                    signature = await window.ethereum.request({
+                        method: 'personal_sign',
+                        params: [messageData.message, address]
+                    });
+                } catch (error) {
+                    if (error.code === 4001) {
+                        throw new Error('Firma rechazada por el usuario');
+                    } else {
+                        throw error;
+                    }
+                }
 
                 // Autenticarse con la firma
                 const authResponse = await fetch(`${API_BASE}/auth/login`, {
@@ -969,7 +1038,23 @@
                 alert('MetaMask conectado exitosamente');
             } catch (error) {
                 console.error('Error conectando MetaMask:', error);
-                alert('Error: ' + error.message);
+                let errorMessage = 'Error desconocido';
+                
+                if (error.message) {
+                    errorMessage = error.message;
+                } else if (error.code === 4001) {
+                    errorMessage = 'Conexión rechazada por el usuario';
+                } else if (error.message && error.message.includes('already pending')) {
+                    errorMessage = 'Ya hay una solicitud pendiente. Por favor espera unos segundos y vuelve a intentar.';
+                }
+                
+                alert('Error: ' + errorMessage);
+            } finally {
+                isConnecting = false;
+                if (connectBtn) {
+                    connectBtn.disabled = false;
+                    connectBtn.textContent = 'Conectar MetaMask';
+                }
             }
         }
 
@@ -989,12 +1074,17 @@
             const disconnectBtn = document.getElementById('disconnect-btn');
             const statusContent = document.getElementById('connection-status');
             const metamaskInfo = document.getElementById('metamask-info');
+            const errorDiv = document.getElementById('connection-error');
 
             if (connectedAddress && authToken) {
                 statusEl.textContent = `Conectado: ${connectedAddress.substring(0, 6)}...${connectedAddress.substring(38)}`;
                 statusEl.style.color = '#0ecb81';
-                connectBtn.style.display = 'none';
-                disconnectBtn.style.display = 'inline-block';
+                if (connectBtn) {
+                    connectBtn.style.display = 'none';
+                    connectBtn.disabled = false;
+                    connectBtn.textContent = 'Conectar MetaMask';
+                }
+                if (disconnectBtn) disconnectBtn.style.display = 'inline-block';
                 statusContent.textContent = `Conectado: ${connectedAddress}`;
                 statusContent.style.color = '#0ecb81';
                 metamaskInfo.innerHTML = `
@@ -1004,11 +1094,15 @@
                     </div>
                 `;
                 document.getElementById('authenticated-actions').style.display = 'block';
+                if (errorDiv) errorDiv.style.display = 'none';
             } else {
                 statusEl.textContent = 'No conectado';
                 statusEl.style.color = '#8a8fa3';
-                connectBtn.style.display = 'inline-block';
-                disconnectBtn.style.display = 'none';
+                if (connectBtn) {
+                    connectBtn.style.display = 'inline-block';
+                    connectBtn.disabled = typeof window.ethereum === 'undefined';
+                }
+                if (disconnectBtn) disconnectBtn.style.display = 'none';
                 statusContent.textContent = 'No conectado';
                 statusContent.style.color = '#8a8fa3';
                 metamaskInfo.innerHTML = '';
@@ -1029,17 +1123,28 @@
                 });
 
                 if (!response.ok) {
-                    throw new Error('Error obteniendo balance');
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || 'Error obteniendo balance');
                 }
 
                 const data = await response.json();
+                
+                // Usar formatWei si balance_formatted no está disponible o está mal formateado
+                let balanceDisplay = data.balance_formatted;
+                if (!balanceDisplay || balanceDisplay.includes('E') || balanceDisplay.includes('e')) {
+                    balanceDisplay = formatWei(data.balance || 0);
+                }
+                
                 document.getElementById('my-balance-result').innerHTML = `
                     <div class="wallet-info">
+                        <div class="stat-label">Dirección</div>
+                        <div class="wallet-address">${data.address}</div>
                         <div class="stat-label">Balance</div>
-                        <div class="balance-display">${data.balance_formatted}</div>
+                        <div class="balance-display">${balanceDisplay}</div>
                     </div>
                 `;
             } catch (error) {
+                console.error('Error obteniendo balance:', error);
                 document.getElementById('my-balance-result').innerHTML = 
                     `<div class="error">Error: ${error.message}</div>`;
             }

@@ -132,13 +132,21 @@ class Blockchain(BaseModel):
     def get_balance(self, address: str) -> int:
         """
         Retorna el balance en wei (entero sin decimales)
+        Comparación case-insensitive de direcciones
         """
         balance = 0
+        # Normalizar la dirección a minúsculas para comparación
+        address_lower = address.lower() if address else ""
+        
         for block in self.chain:
             for transaction in block.transactions:
-                if transaction.sender == address:
+                # Comparar en minúsculas para evitar problemas de case sensitivity
+                sender_lower = transaction.sender.lower() if transaction.sender else ""
+                recipient_lower = transaction.recipient.lower() if transaction.recipient else ""
+                
+                if sender_lower == address_lower:
                     balance -= transaction.amount
-                if transaction.recipient == address:
+                if recipient_lower == address_lower:
                     balance += transaction.amount
         return balance
     

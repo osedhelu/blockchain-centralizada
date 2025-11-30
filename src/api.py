@@ -404,9 +404,13 @@ async def get_my_transactions(current_user: str = Depends(get_current_user)):
         transactions = []
         chain = blockchain_service().get_chain()
         
+        current_user_lower = current_user.lower()
         for block in chain:
             for tx in block.transactions:
-                if tx.sender.lower() == current_user.lower() or tx.recipient.lower() == current_user.lower():
+                sender_lower = tx.sender.lower() if tx.sender else ""
+                recipient_lower = tx.recipient.lower() if tx.recipient else ""
+                
+                if sender_lower == current_user_lower or recipient_lower == current_user_lower:
                     transactions.append({
                         "block_index": block.index,
                         "block_hash": block.hash,
@@ -415,7 +419,7 @@ async def get_my_transactions(current_user: str = Depends(get_current_user)):
                         "recipient": tx.recipient,
                         "amount": tx.amount,
                         "amount_formatted": format_amount(tx.amount),
-                        "type": "sent" if tx.sender.lower() == current_user.lower() else "received",
+                        "type": "sent" if sender_lower == current_user_lower else "received",
                         "hash": tx.calculate_hash()
                     })
         
