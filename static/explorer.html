@@ -490,7 +490,7 @@
             const weiStr = wei.toString();
             if (weiStr === '0') return '0';
             
-            // Si el número es menor que 10^18, agregar ceros al inicio
+            // Convertir a BigInt para manejar números grandes
             const weiBigInt = BigInt(weiStr);
             const divisor = BigInt('1000000000000000000'); // 10^18
             
@@ -503,7 +503,10 @@
             
             // Formatear la parte fraccional con 18 dígitos, eliminando ceros finales
             const fractionalStr = fractionalPart.toString().padStart(18, '0').replace(/0+$/, '');
-            return fractionalStr ? `${wholePart}.${fractionalStr}` : wholePart.toString();
+            const result = fractionalStr ? `${wholePart}.${fractionalStr}` : wholePart.toString();
+            
+            // Eliminar punto decimal si no hay parte fraccional
+            return result.endsWith('.') ? result.slice(0, -1) : result;
         }
 
         function switchTab(tabName) {

@@ -58,11 +58,26 @@ def format_amount(wei_amount: Union[int, str, Decimal], decimals: int = DECIMALS
     else:
         wei_amount = Decimal(str(wei_amount))
     
-    # Convertir de wei a formato legible
+    # Convertir de wei a formato legible usando from_wei
     amount = from_wei(wei_amount)
-    # Formatear eliminando ceros finales
+    # Formatear eliminando ceros finales pero sin usar normalize() para evitar notación científica
     formatted = amount.quantize(Decimal('0.' + '0' * decimals), rounding=ROUND_DOWN)
-    return str(formatted.normalize())
+    
+    # Convertir a string sin notación científica
+    result = str(formatted)
+    # Si tiene notación científica, convertirla a formato normal
+    if 'E' in result or 'e' in result:
+        # Convertir notación científica a formato normal
+        parts = result.split('E') if 'E' in result else result.split('e')
+        base = Decimal(parts[0])
+        exponent = int(parts[1])
+        result = str(base * (Decimal(10) ** exponent))
+    
+    # Eliminar ceros finales después del punto decimal
+    if '.' in result:
+        result = result.rstrip('0').rstrip('.')
+    
+    return result
 
 
 def parse_amount(amount: Union[str, float, int, Decimal]) -> int:

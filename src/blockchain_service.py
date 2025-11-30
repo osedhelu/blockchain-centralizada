@@ -4,7 +4,7 @@ from src.redis_client import redis_client
 from src.rabbitmq_client import rabbitmq_client
 from src.config import settings
 from src.genesis import genesis_loader
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 
 class BlockchainService:
