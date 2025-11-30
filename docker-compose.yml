@@ -125,7 +125,40 @@ services:
       - ./genesis.json:/app/genesis.json:ro
     networks:
       - blockchain_network
-    command: celery -A src.celery_app worker --loglevel=info --concurrency=4 --queues=default,mining,transactions,validation,cache
+    command: celery -A src.celery_app worker --loglevel=info --concurrency=2 --queues=auto_mining,mining,default,transactions,validation,cache
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: blockchain_celery_beat
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-blockchain_db}
+      POSTGRES_USER: ${POSTGRES_USER:-blockchain_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-blockchain_pass}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USER: ${RABBITMQ_USER:-rabbitmq_user}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq_pass}
+      BLOCKCHAIN_DIFFICULTY: ${BLOCKCHAIN_DIFFICULTY:-4}
+      BLOCKCHAIN_MINING_REWARD: ${BLOCKCHAIN_MINING_REWARD:-100}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+    networks:
+      - blockchain_network
+    command: celery -A src.celery_app beat --loglevel=info
 
   flower:
     build:

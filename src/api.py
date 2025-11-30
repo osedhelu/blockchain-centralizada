@@ -232,7 +232,8 @@ async def mine_block(mining_request: MiningRequest, async_mode: bool = True):
         else:
             # Minar de forma síncrona (comportamiento original)
             block = blockchain_service().mine_pending_transactions(
-                mining_request.mining_reward_address
+                mining_reward_address=mining_request.mining_reward_address,
+                include_reward=True
             )
             
             if block:

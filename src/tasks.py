@@ -1,4 +1,5 @@
 from celery import Task
+from celery.schedules import crontab
 from src.celery_app import celery_app
 from src.blockchain_service import BlockchainService
 from src.database import db
@@ -8,6 +9,7 @@ from src.models import Transaction, Block
 from src.utils import parse_amount, format_amount
 from typing import Optional, Dict
 import traceback
+import time
 
 
 class BlockchainTask(Task):
@@ -46,15 +48,18 @@ class BlockchainTask(Task):
 
 
 @celery_app.task(base=BlockchainTask, bind=True, name='src.tasks.mine_block_task')
-def mine_block_task(self, mining_reward_address: str) -> Dict:
+def mine_block_task(self, mining_reward_address: str = None, include_reward: bool = True) -> Dict:
     """
     Tarea asíncrona para minar un bloque
+    - mining_reward_address: Dirección que recibe la recompensa (opcional)
+    - include_reward: Si True, agrega recompensa de minería. Si False, mina sin recompensa
     """
     try:
         # Asegurar que los servicios estén inicializados
         self.initialize_services()
         
-        print(f"⛏️  Iniciando minería para dirección: {mining_reward_address}")
+        reward_msg = f"con recompensa para {mining_reward_address}" if include_reward and mining_reward_address else "sin recompensa"
+        print(f"⛏️  Iniciando minería {reward_msg}")
         
         # Obtener transacciones pendientes antes de minar
         pending_count = len(self.blockchain_service.get_pending_transactions())
@@ -66,8 +71,11 @@ def mine_block_task(self, mining_reward_address: str) -> Dict:
                 'block': None
             }
         
-        # Minar el bloque
-        block = self.blockchain_service.mine_pending_transactions(mining_reward_address)
+        # Minar el bloque (sin recompensa si mining_reward_address es None)
+        block = self.blockchain_service.mine_pending_transactions(
+            mining_reward_address=mining_reward_address,
+            include_reward=include_reward
+        )
         
         if block:
             block_dict = {
@@ -79,7 +87,7 @@ def mine_block_task(self, mining_reward_address: str) -> Dict:
                 'nonce': block.nonce
             }
             
-            print(f"✅ Bloque #{block.index} minado exitosamente")
+            print(f"✅ Bloque #{block.index} minado exitosamente {reward_msg}")
             
             return {
                 'success': True,
@@ -104,64 +112,104 @@ def mine_block_task(self, mining_reward_address: str) -> Dict:
         }
 
 
+@celery_app.task(base=BlockchainTask, bind=True, name='src.tasks.auto_mine_task')
+def auto_mine_task(self) -> Dict:
+    """
+    Tarea automática para minar bloques sin recompensa
+    Se ejecuta periódicamente para confirmar transacciones pendientes automáticamente
+    """
+    try:
+        # Asegurar que los servicios estén inicializados
+        self.initialize_services()
+        
+        # Obtener transacciones pendientes
+        pending_count = len(self.blockchain_service.get_pending_transactions())
+        
+        if pending_count == 0:
+            return {
+                'success': False,
+                'message': 'No hay transacciones pendientes para minar',
+                'block': None,
+                'worker': self.request.hostname
+            }
+        
+        print(f"🤖 Worker {self.request.hostname}: Minando automáticamente {pending_count} transacción(es) pendiente(s) (sin recompensa)")
+        
+        # Minar sin recompensa
+        block = self.blockchain_service.mine_pending_transactions(
+            mining_reward_address=None,
+            include_reward=False
+        )
+        
+        if block:
+            block_dict = {
+                'index': block.index,
+                'timestamp': block.timestamp.isoformat(),
+                'transactions_count': len(block.transactions),
+                'previous_hash': block.previous_hash,
+                'hash': block.hash,
+                'nonce': block.nonce
+            }
+            
+            print(f"✅ Worker {self.request.hostname}: Bloque #{block.index} minado automáticamente (sin recompensa)")
+            
+            return {
+                'success': True,
+                'message': f'Bloque #{block.index} minado automáticamente sin recompensa',
+                'block': block_dict,
+                'worker': self.request.hostname
+            }
+        else:
+            return {
+                'success': False,
+                'message': 'Error al guardar el bloque en la base de datos',
+                'block': None,
+                'worker': self.request.hostname
+            }
+    except Exception as e:
+        error_msg = f"Error en minería automática: {str(e)}"
+        print(f"❌ Worker {self.request.hostname}: {error_msg}")
+        print(traceback.format_exc())
+        return {
+            'success': False,
+            'message': error_msg,
+            'block': None,
+            'error': str(e),
+            'worker': self.request.hostname
+        }
+
+
 @celery_app.task(base=BlockchainTask, bind=True, name='src.tasks.process_transaction_task')
 def process_transaction_task(self, sender: str, recipient: str, amount: float) -> Dict:
     """
     Tarea asíncrona para procesar una transacción
     """
     try:
-        # Asegurar que los servicios estén inicializados
         self.initialize_services()
         
-        print(f"📝 Procesando transacción: {sender} → {recipient}, monto: {amount}")
-        
-        # Convertir monto a wei
-        amount_wei = parse_amount(amount)
-        
-        # Agregar transacción
-        success = self.blockchain_service.add_transaction(
-            sender,
-            recipient,
-            float(amount)
-        )
+        success = self.blockchain_service.add_transaction(sender, recipient, amount)
         
         if success:
-            # Obtener balance actualizado
-            sender_balance = self.blockchain_service.get_balance(sender)
-            recipient_balance = self.blockchain_service.get_balance(recipient)
-            
-            print(f"✅ Transacción procesada exitosamente")
-            
             return {
                 'success': True,
                 'message': 'Transacción agregada exitosamente',
                 'transaction': {
                     'sender': sender,
                     'recipient': recipient,
-                    'amount': amount_wei,
-                    'amount_formatted': format_amount(amount_wei)
-                },
-                'balances': {
-                    'sender': sender_balance,
-                    'sender_formatted': format_amount(sender_balance),
-                    'recipient': recipient_balance,
-                    'recipient_formatted': format_amount(recipient_balance)
+                    'amount': amount
                 }
             }
         else:
             return {
                 'success': False,
-                'message': 'Error al agregar transacción',
-                'transaction': None
+                'message': 'Error al agregar transacción'
             }
     except Exception as e:
         error_msg = f"Error procesando transacción: {str(e)}"
         print(f"❌ {error_msg}")
-        print(traceback.format_exc())
         return {
             'success': False,
             'message': error_msg,
-            'transaction': None,
             'error': str(e)
         }
 
@@ -169,34 +217,25 @@ def process_transaction_task(self, sender: str, recipient: str, amount: float) -
 @celery_app.task(base=BlockchainTask, bind=True, name='src.tasks.validate_chain_task')
 def validate_chain_task(self) -> Dict:
     """
-    Tarea asíncrona para validar la cadena completa
+    Tarea asíncrona para validar la cadena de bloques
     """
     try:
-        # Asegurar que los servicios estén inicializados
         self.initialize_services()
         
-        print("🔍 Validando cadena de bloques...")
-        
         is_valid = self.blockchain_service.is_chain_valid()
-        chain_info = self.blockchain_service.get_chain_info()
+        chain_length = len(self.blockchain_service.get_chain())
         
-        result = {
+        return {
             'success': True,
             'is_valid': is_valid,
-            'chain_info': chain_info,
+            'chain_length': chain_length,
             'message': 'Cadena válida' if is_valid else 'Cadena inválida'
         }
-        
-        print(f"✅ Validación completada: {'Válida' if is_valid else 'Inválida'}")
-        
-        return result
     except Exception as e:
         error_msg = f"Error validando cadena: {str(e)}"
         print(f"❌ {error_msg}")
-        print(traceback.format_exc())
         return {
             'success': False,
-            'is_valid': False,
             'message': error_msg,
             'error': str(e)
         }
@@ -208,10 +247,7 @@ def update_cache_task(self) -> Dict:
     Tarea asíncrona para actualizar la caché de Redis
     """
     try:
-        # Asegurar que los servicios estén inicializados
         self.initialize_services()
-        
-        print("🔄 Actualizando caché...")
         
         chain = self.blockchain_service.get_chain()
         if chain:
@@ -223,17 +259,21 @@ def update_cache_task(self) -> Dict:
             
             pending_tx = self.blockchain_service.get_pending_transactions()
             redis_client.cache_pending_transactions(pending_tx)
-        
-        print("✅ Caché actualizada exitosamente")
-        
-        return {
-            'success': True,
-            'message': 'Caché actualizada exitosamente'
-        }
+            
+            return {
+                'success': True,
+                'message': 'Caché actualizada exitosamente',
+                'chain_length': len(chain),
+                'pending_transactions': len(pending_tx)
+            }
+        else:
+            return {
+                'success': False,
+                'message': 'No hay bloques en la cadena'
+            }
     except Exception as e:
         error_msg = f"Error actualizando caché: {str(e)}"
         print(f"❌ {error_msg}")
-        print(traceback.format_exc())
         return {
             'success': False,
             'message': error_msg,
@@ -247,60 +287,41 @@ def batch_process_transactions_task(self, transactions: list) -> Dict:
     Tarea asíncrona para procesar múltiples transacciones en lote
     """
     try:
-        # Asegurar que los servicios estén inicializados
         self.initialize_services()
         
-        print(f"📦 Procesando lote de {len(transactions)} transacciones...")
-        
         results = []
-        success_count = 0
-        error_count = 0
-        
         for tx in transactions:
             try:
                 success = self.blockchain_service.add_transaction(
                     tx['sender'],
                     tx['recipient'],
-                    tx['amount']
+                    float(tx['amount'])
                 )
-                if success:
-                    success_count += 1
-                    results.append({
-                        'success': True,
-                        'transaction': tx
-                    })
-                else:
-                    error_count += 1
-                    results.append({
-                        'success': False,
-                        'transaction': tx,
-                        'error': 'Error al agregar transacción'
-                    })
+                results.append({
+                    'success': success,
+                    'transaction': tx
+                })
             except Exception as e:
-                error_count += 1
                 results.append({
                     'success': False,
                     'transaction': tx,
                     'error': str(e)
                 })
         
-        print(f"✅ Lote procesado: {success_count} exitosas, {error_count} errores")
+        success_count = sum(1 for r in results if r['success'])
         
         return {
             'success': True,
-            'message': f'Lote procesado: {success_count} exitosas, {error_count} errores',
-            'total': len(transactions),
-            'success_count': success_count,
-            'error_count': error_count,
-            'results': results
+            'message': f'Procesadas {success_count}/{len(transactions)} transacciones',
+            'results': results,
+            'total': len(results),
+            'success_count': success_count
         }
     except Exception as e:
-        error_msg = f"Error procesando lote: {str(e)}"
+        error_msg = f"Error procesando lote de transacciones: {str(e)}"
         print(f"❌ {error_msg}")
-        print(traceback.format_exc())
         return {
             'success': False,
             'message': error_msg,
             'error': str(e)
         }
-

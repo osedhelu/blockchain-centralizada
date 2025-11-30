@@ -26,6 +26,7 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,  # Retry de conexión al inicio
     task_routes={
         'src.tasks.mine_block_task': {'queue': 'mining'},
+        'src.tasks.auto_mine_task': {'queue': 'auto_mining'},
         'src.tasks.process_transaction_task': {'queue': 'transactions'},
         'src.tasks.validate_chain_task': {'queue': 'validation'},
         'src.tasks.update_cache_task': {'queue': 'cache'},
@@ -34,6 +35,13 @@ celery_app.conf.update(
     task_default_exchange='default',
     task_default_exchange_type='direct',
     task_default_routing_key='default',
+    # Configuración de tareas periódicas (beat schedule)
+    beat_schedule={
+        'auto-mine-every-30-seconds': {
+            'task': 'src.tasks.auto_mine_task',
+            'schedule': 30.0,  # Cada 30 segundos
+        },
+    },
 )
 
 # Importar tareas para que Celery las registre

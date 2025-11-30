@@ -26,6 +26,27 @@ class BlockchainService:
                 )
                 self.blockchain.chain = blocks
                 print(f"Blockchain cargada desde BD: {len(blocks)} bloques")
+                
+                # Cargar transacciones pendientes desde Redis si están disponibles
+                try:
+                    if redis_client.client is None:
+                        redis_client.initialize()
+                    pending_tx_data = redis_client.get_pending_transactions()
+                    if pending_tx_data:
+                        from src.models import Transaction
+                        from datetime import datetime
+                        self.blockchain.pending_transactions = []
+                        for tx_dict in pending_tx_data:
+                            tx = Transaction(
+                                sender=tx_dict.get('sender', ''),
+                                recipient=tx_dict.get('recipient', ''),
+                                amount=int(tx_dict.get('amount', 0)),
+                                timestamp=datetime.fromisoformat(tx_dict.get('timestamp', datetime.now().isoformat())) if isinstance(tx_dict.get('timestamp'), str) else tx_dict.get('timestamp', datetime.now())
+                            )
+                            self.blockchain.pending_transactions.append(tx)
+                        print(f"✓ Transacciones pendientes cargadas desde Redis: {len(self.blockchain.pending_transactions)}")
+                except Exception as e:
+                    print(f"⚠️  No se pudieron cargar transacciones pendientes desde Redis: {e}")
             else:
                 # Cargar transacciones del génesis
                 genesis_loader.load_genesis()
@@ -77,12 +98,40 @@ class BlockchainService:
             print(f"Error agregando transacción: {e}")
             return False
     
-    def mine_pending_transactions(self, mining_reward_address: str) -> Optional[Block]:
+    def mine_pending_transactions(self, mining_reward_address: str = None, include_reward: bool = True) -> Optional[Block]:
+        """
+        Mina las transacciones pendientes
+        - mining_reward_address: Dirección que recibe la recompensa (opcional)
+        - include_reward: Si True, agrega recompensa de minería. Si False, mina sin recompensa
+        """
         try:
-            self.blockchain.mine_pending_transactions(mining_reward_address)
+            # Asegurar que tenemos las transacciones pendientes más recientes desde Redis
+            try:
+                if redis_client.client is None:
+                    redis_client.initialize()
+                pending_tx_data = redis_client.get_pending_transactions()
+                if pending_tx_data:
+                    from src.models import Transaction
+                    from datetime import datetime
+                    # Sincronizar transacciones pendientes desde Redis
+                    self.blockchain.pending_transactions = []
+                    for tx_dict in pending_tx_data:
+                        tx = Transaction(
+                            sender=tx_dict.get('sender', ''),
+                            recipient=tx_dict.get('recipient', ''),
+                            amount=int(tx_dict.get('amount', 0)),
+                            timestamp=datetime.fromisoformat(tx_dict.get('timestamp', datetime.now().isoformat())) if isinstance(tx_dict.get('timestamp'), str) else tx_dict.get('timestamp', datetime.now())
+                        )
+                        self.blockchain.pending_transactions.append(tx)
+            except Exception as e:
+                print(f"⚠️  Advertencia al sincronizar transacciones pendientes: {e}")
+            
+            self.blockchain.mine_pending_transactions(mining_reward_address, include_reward=include_reward)
             latest_block = self.blockchain.get_latest_block()
             
             if db.save_block(latest_block):
+                # Limpiar transacciones pendientes en Redis después de minar
+                redis_client.cache_pending_transactions([])
                 redis_client.cache_blockchain_state(
                     len(self.blockchain.chain),
                     latest_block.hash
@@ -96,12 +145,47 @@ class BlockchainService:
     
     def get_balance(self, address: str) -> int:
         """Retorna el balance en wei (entero sin decimales)"""
+        # Asegurar que tenemos la cadena más reciente antes de calcular el balance
+        self.get_chain()  # Recarga desde BD
         return self.blockchain.get_balance(address)
     
     def get_chain(self) -> List[Block]:
+        # Recargar desde BD para asegurar que tenemos la versión más reciente
+        try:
+            blocks = db.get_all_blocks()
+            if blocks:
+                self.blockchain.chain = blocks
+        except Exception as e:
+            print(f"⚠️  Advertencia al recargar cadena desde BD: {e}")
         return self.blockchain.chain
     
     def get_pending_transactions(self) -> List[Transaction]:
+        # SIEMPRE sincronizar con Redis antes de devolver (fuente de verdad)
+        try:
+            if redis_client.client is None:
+                redis_client.initialize()
+            pending_tx_data = redis_client.get_pending_transactions()
+            
+            # Limpiar y reconstruir desde Redis (fuente de verdad)
+            self.blockchain.pending_transactions = []
+            
+            if pending_tx_data:
+                from src.models import Transaction
+                from datetime import datetime
+                for tx_dict in pending_tx_data:
+                    try:
+                        tx = Transaction(
+                            sender=tx_dict.get('sender', ''),
+                            recipient=tx_dict.get('recipient', ''),
+                            amount=int(tx_dict.get('amount', 0)),
+                            timestamp=datetime.fromisoformat(tx_dict.get('timestamp', datetime.now().isoformat())) if isinstance(tx_dict.get('timestamp'), str) else tx_dict.get('timestamp', datetime.now())
+                        )
+                        self.blockchain.pending_transactions.append(tx)
+                    except Exception as e:
+                        print(f"⚠️  Error creando transacción desde Redis: {e}")
+                        continue
+        except Exception as e:
+            print(f"⚠️  Advertencia al obtener transacciones pendientes desde Redis: {e}")
         return self.blockchain.pending_transactions
     
     def get_block_by_hash(self, hash: str) -> Optional[Block]:
@@ -125,11 +209,14 @@ class BlockchainService:
         return self.blockchain.is_chain_valid()
     
     def get_chain_info(self) -> dict:
+        # Sincronizar antes de devolver info
+        chain = self.get_chain()  # Recarga desde BD
+        pending = self.get_pending_transactions()  # Sincroniza desde Redis
         return {
-            'length': len(self.blockchain.chain),
+            'length': len(chain),
             'difficulty': self.blockchain.difficulty,
             'mining_reward': self.blockchain.mining_reward,
-            'pending_transactions': len(self.blockchain.pending_transactions),
+            'pending_transactions': len(pending),
             'is_valid': self.is_chain_valid()
         }
 

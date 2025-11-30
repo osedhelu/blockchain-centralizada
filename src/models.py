@@ -105,16 +105,22 @@ class Blockchain(BaseModel):
     def add_transaction(self, transaction: Transaction) -> None:
         self.pending_transactions.append(transaction)
     
-    def mine_pending_transactions(self, mining_reward_address: str) -> None:
-        # Convertir mining_reward a wei
-        from src.utils import to_wei
-        reward_wei = to_wei(self.mining_reward)
-        reward_tx = Transaction(
-            sender="Sistema",
-            recipient=mining_reward_address,
-            amount=reward_wei
-        )
-        self.pending_transactions.append(reward_tx)
+    def mine_pending_transactions(self, mining_reward_address: str = None, include_reward: bool = True) -> None:
+        """
+        Mina las transacciones pendientes
+        - mining_reward_address: Dirección que recibe la recompensa (opcional)
+        - include_reward: Si True, agrega recompensa de minería. Si False, mina sin recompensa
+        """
+        # Solo agregar recompensa si se especifica y se requiere
+        if include_reward and mining_reward_address:
+            from src.utils import to_wei
+            reward_wei = to_wei(self.mining_reward)
+            reward_tx = Transaction(
+                sender="Sistema",
+                recipient=mining_reward_address,
+                amount=reward_wei
+            )
+            self.pending_transactions.append(reward_tx)
         
         block = Block(
             index=len(self.chain),
