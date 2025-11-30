@@ -71,15 +71,24 @@ def parse_amount(amount: Union[str, float, int, Decimal]) -> int:
     Ejemplo: "1.5" -> 1500000000000000000
     Ejemplo: "1000000000000000000" -> 1000000000000000000 (ya está en wei)
     """
-    if isinstance(amount, str):
+    # Si ya es un int grande (probablemente ya está en wei), retornarlo directamente
+    if isinstance(amount, int):
+        # Si el int es muy grande (> 10^10), asumir que ya está en wei
+        if amount > 10**10:
+            return amount
+        # Si es un int pequeño, tratarlo como tokens y convertir a wei
+        amount = Decimal(str(amount))
+    elif isinstance(amount, str):
         # Si es un string muy largo sin punto, asumir que ya está en wei
         if '.' not in amount and len(amount) > 10:
             try:
-                return int(amount)
+                wei_int = int(amount)
+                if wei_int > 10**10:
+                    return wei_int
             except:
                 pass
         amount = Decimal(amount)
-    elif isinstance(amount, (int, float)):
+    elif isinstance(amount, float):
         amount = Decimal(str(amount))
     elif isinstance(amount, Decimal):
         pass

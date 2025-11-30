@@ -14,6 +14,10 @@ class BlockchainService:
     
     def _initialize_blockchain(self):
         try:
+            # Asegurar que la base de datos esté inicializada
+            if db.connection_pool is None:
+                db.initialize()
+            
             blocks = db.get_all_blocks()
             if blocks:
                 self.blockchain = Blockchain(
@@ -40,8 +44,12 @@ class BlockchainService:
                     genesis_block.timestamp = genesis_timestamp
                     genesis_block.hash = genesis_block.calculate_hash()
                 
-                db.save_block(genesis_block)
-                print(f"✓ Blockchain nueva creada con {len(genesis_transactions)} transacciones génesis")
+                # Guardar el bloque génesis en la base de datos
+                if db.connection_pool is not None:
+                    db.save_block(genesis_block)
+                    print(f"✓ Blockchain nueva creada con {len(genesis_transactions)} transacciones génesis")
+                else:
+                    print(f"⚠️  Advertencia: Base de datos no inicializada, bloque génesis no guardado")
         except Exception as e:
             print(f"Error inicializando blockchain: {e}")
             import traceback
@@ -99,6 +107,20 @@ class BlockchainService:
     def get_block_by_hash(self, hash: str) -> Optional[Block]:
         return db.get_block_by_hash(hash)
     
+    def get_transaction_by_hash(self, tx_hash: str) -> Optional[Dict]:
+        """Busca una transacción por su hash en toda la cadena"""
+        chain = self.get_chain()
+        for block in chain:
+            for tx in block.transactions:
+                if tx.calculate_hash() == tx_hash:
+                    return {
+                        'transaction': tx.to_dict(),
+                        'block_index': block.index,
+                        'block_hash': block.hash,
+                        'block_timestamp': block.timestamp.isoformat()
+                    }
+        return None
+    
     def is_chain_valid(self) -> bool:
         return self.blockchain.is_chain_valid()
     
@@ -112,5 +134,16 @@ class BlockchainService:
         }
 
 
-blockchain_service = BlockchainService()
+# Instancia global que se inicializará cuando se necesite
+_blockchain_service_instance = None
+
+def get_blockchain_service() -> BlockchainService:
+    """Obtiene la instancia del servicio de blockchain, inicializándola si es necesario"""
+    global _blockchain_service_instance
+    if _blockchain_service_instance is None:
+        _blockchain_service_instance = BlockchainService()
+    return _blockchain_service_instance
+
+# Para compatibilidad con el código existente, crear una instancia después de inicializar servicios
+blockchain_service = None  # Se inicializará después de que los servicios estén listos
 

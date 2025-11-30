@@ -23,6 +23,7 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     result_expires=3600,  # Los resultados expiran en 1 hora
+    broker_connection_retry_on_startup=True,  # Retry de conexión al inicio
     task_routes={
         'src.tasks.mine_block_task': {'queue': 'mining'},
         'src.tasks.process_transaction_task': {'queue': 'transactions'},

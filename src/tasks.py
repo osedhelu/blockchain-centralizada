@@ -13,10 +13,29 @@ import traceback
 class BlockchainTask(Task):
     """Clase base para tareas de blockchain con manejo de errores"""
     _blockchain_service = None
+    _services_initialized = False
+    
+    def initialize_services(self):
+        """Inicializa los servicios necesarios para las tareas"""
+        if not self._services_initialized:
+            try:
+                # Inicializar base de datos
+                db.initialize()
+                # Inicializar Redis
+                redis_client.initialize()
+                # Inicializar RabbitMQ (opcional para tareas)
+                try:
+                    rabbitmq_client.initialize()
+                except:
+                    pass  # No crítico para tareas
+                self._services_initialized = True
+            except Exception as e:
+                print(f"⚠️  Advertencia al inicializar servicios: {e}")
     
     @property
     def blockchain_service(self):
         if self._blockchain_service is None:
+            self.initialize_services()
             self._blockchain_service = BlockchainService()
         return self._blockchain_service
     
@@ -32,6 +51,9 @@ def mine_block_task(self, mining_reward_address: str) -> Dict:
     Tarea asíncrona para minar un bloque
     """
     try:
+        # Asegurar que los servicios estén inicializados
+        self.initialize_services()
+        
         print(f"⛏️  Iniciando minería para dirección: {mining_reward_address}")
         
         # Obtener transacciones pendientes antes de minar
@@ -88,6 +110,9 @@ def process_transaction_task(self, sender: str, recipient: str, amount: float) -
     Tarea asíncrona para procesar una transacción
     """
     try:
+        # Asegurar que los servicios estén inicializados
+        self.initialize_services()
+        
         print(f"📝 Procesando transacción: {sender} → {recipient}, monto: {amount}")
         
         # Convertir monto a wei
@@ -147,6 +172,9 @@ def validate_chain_task(self) -> Dict:
     Tarea asíncrona para validar la cadena completa
     """
     try:
+        # Asegurar que los servicios estén inicializados
+        self.initialize_services()
+        
         print("🔍 Validando cadena de bloques...")
         
         is_valid = self.blockchain_service.is_chain_valid()
@@ -180,6 +208,9 @@ def update_cache_task(self) -> Dict:
     Tarea asíncrona para actualizar la caché de Redis
     """
     try:
+        # Asegurar que los servicios estén inicializados
+        self.initialize_services()
+        
         print("🔄 Actualizando caché...")
         
         chain = self.blockchain_service.get_chain()
@@ -216,6 +247,9 @@ def batch_process_transactions_task(self, transactions: list) -> Dict:
     Tarea asíncrona para procesar múltiples transacciones en lote
     """
     try:
+        # Asegurar que los servicios estén inicializados
+        self.initialize_services()
+        
         print(f"📦 Procesando lote de {len(transactions)} transacciones...")
         
         results = []

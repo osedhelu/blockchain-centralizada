@@ -14,12 +14,24 @@ class GenesisLoader:
     def load_genesis(self) -> Optional[Dict]:
         """Carga el archivo genesis.json"""
         try:
-            # Buscar el archivo en el directorio raíz del proyecto
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            genesis_path = os.path.join(project_root, self.genesis_file)
+            # Buscar el archivo en varios lugares posibles
+            possible_paths = [
+                # En Docker: desde el directorio raíz montado
+                os.path.join("/app/root", self.genesis_file),
+                # En desarrollo local: desde el directorio raíz del proyecto
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), self.genesis_file),
+                # Ruta absoluta si está en el directorio actual
+                os.path.join(os.getcwd(), self.genesis_file),
+            ]
             
-            if not os.path.exists(genesis_path):
-                print(f"Archivo genesis.json no encontrado en {genesis_path}. Usando bloque génesis vacío.")
+            genesis_path = None
+            for path in possible_paths:
+                if os.path.exists(path) and os.path.isfile(path):
+                    genesis_path = path
+                    break
+            
+            if not genesis_path:
+                print(f"Archivo genesis.json no encontrado. Buscado en: {possible_paths}. Usando bloque génesis vacío.")
                 return None
             
             with open(genesis_path, 'r', encoding='utf-8') as f:
@@ -64,10 +76,12 @@ class GenesisLoader:
                 continue
             
             # Crear transacción desde "Sistema" (dirección especial del génesis)
+            # amount_wei ya es un int (wei), pero Transaction espera que se pase como int directamente
+            # o como string que pueda parsearse
             transaction = Transaction(
                 sender="Sistema",
                 recipient=address,
-                amount=amount_wei,  # Monto en wei (entero)
+                amount=int(amount_wei),  # Asegurar que sea int
                 timestamp=datetime.now()
             )
             transactions.append(transaction)

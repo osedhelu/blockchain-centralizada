@@ -3,7 +3,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict
-from src.blockchain_service import blockchain_service
+from src.blockchain_service import get_blockchain_service
+
+# Función helper para obtener el servicio
+def blockchain_service():
+    return get_blockchain_service()
 from src.models import Transaction, Block
 from src.wallet import wallet_manager
 from src.utils import parse_amount, format_amount
@@ -58,7 +62,7 @@ async def root():
 @app.get("/chain")
 async def get_chain():
     try:
-        chain = blockchain_service.get_chain()
+        chain = blockchain_service().get_chain()
         return {
             "chain": [
                 {
@@ -80,7 +84,7 @@ async def get_chain():
 @app.get("/chain/info")
 async def get_chain_info():
     try:
-        return blockchain_service.get_chain_info()
+        return blockchain_service().get_chain_info()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -88,7 +92,7 @@ async def get_chain_info():
 @app.get("/chain/validate")
 async def validate_chain():
     try:
-        is_valid = blockchain_service.is_chain_valid()
+        is_valid = blockchain_service().is_chain_valid()
         return {"is_valid": is_valid}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -131,7 +135,7 @@ async def create_transaction(transaction: TransactionRequest, async_mode: bool =
             }
         else:
             # Procesar de forma síncrona (comportamiento original)
-            success = blockchain_service.add_transaction(
+            success = blockchain_service().add_transaction(
                 transaction.sender,
                 transaction.recipient,
                 float(transaction.amount)
@@ -157,7 +161,7 @@ async def create_transaction(transaction: TransactionRequest, async_mode: bool =
 @app.get("/transactions/pending")
 async def get_pending_transactions():
     try:
-        pending = blockchain_service.get_pending_transactions()
+        pending = blockchain_service().get_pending_transactions()
         return {
             "pending_transactions": [tx.to_dict() for tx in pending],
             "count": len(pending)
@@ -185,7 +189,7 @@ async def mine_block(mining_request: MiningRequest, async_mode: bool = True):
             }
         else:
             # Minar de forma síncrona (comportamiento original)
-            block = blockchain_service.mine_pending_transactions(
+            block = blockchain_service().mine_pending_transactions(
                 mining_request.mining_reward_address
             )
             
@@ -210,7 +214,7 @@ async def mine_block(mining_request: MiningRequest, async_mode: bool = True):
 @app.get("/balance/{address}")
 async def get_balance(address: str):
     try:
-        balance_wei = blockchain_service.get_balance(address)  # Balance en wei (entero)
+        balance_wei = blockchain_service().get_balance(address)  # Balance en wei (entero)
         return {
             "address": address,
             "balance": balance_wei,  # Balance en wei (entero)
@@ -223,7 +227,7 @@ async def get_balance(address: str):
 @app.get("/block/{hash}")
 async def get_block_by_hash(hash: str):
     try:
-        block = blockchain_service.get_block_by_hash(hash)
+        block = blockchain_service().get_block_by_hash(hash)
         if block:
             return {
                 "index": block.index,
@@ -235,6 +239,21 @@ async def get_block_by_hash(hash: str):
             }
         else:
             raise HTTPException(status_code=404, detail="Bloque no encontrado")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/transaction/{tx_hash}")
+async def get_transaction_by_hash(tx_hash: str):
+    """Busca una transacción por su hash"""
+    try:
+        result = blockchain_service().get_transaction_by_hash(tx_hash)
+        if result:
+            return result
+        else:
+            raise HTTPException(status_code=404, detail="Transacción no encontrada")
     except HTTPException:
         raise
     except Exception as e:
@@ -276,7 +295,7 @@ async def import_wallet(request: WalletImportRequest):
             request.mnemonic,
             account_index=request.account_index
         )
-        balance = blockchain_service.get_balance(wallet["address"])
+        balance = blockchain_service().get_balance(wallet["address"])
         return {
             "success": True,
             "wallet": {
@@ -298,7 +317,7 @@ async def get_wallet_balance(address: str):
     try:
         if not wallet_manager.verify_address(address):
             raise HTTPException(status_code=400, detail="Dirección inválida")
-        balance_wei = blockchain_service.get_balance(address)  # Balance en wei (entero)
+        balance_wei = blockchain_service().get_balance(address)  # Balance en wei (entero)
         return {
             "address": address,
             "balance": balance_wei,  # Balance en wei (entero)
@@ -318,7 +337,7 @@ async def get_address_transactions(address: str):
             raise HTTPException(status_code=400, detail="Dirección inválida")
         
         transactions = []
-        chain = blockchain_service.get_chain()
+        chain = blockchain_service().get_chain()
         
         for block in chain:
             for tx in block.transactions:
@@ -434,7 +453,7 @@ async def batch_create_transactions(batch_request: BatchTransactionRequest, asyn
             results = []
             for tx in batch_request.transactions:
                 try:
-                    success = blockchain_service.add_transaction(
+                    success = blockchain_service().add_transaction(
                         tx['sender'],
                         tx['recipient'],
                         float(tx['amount'])

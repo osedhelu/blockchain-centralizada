@@ -274,6 +274,17 @@
             border-radius: 8px;
             padding: 16px;
             margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .block-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: #f0b90b;
+        }
+
+        .block-item.expanded {
+            background: rgba(255, 255, 255, 0.06);
         }
 
         .block-header {
@@ -281,6 +292,65 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 12px;
+        }
+
+        .block-expand-btn {
+            background: rgba(240, 185, 11, 0.2);
+            border: 1px solid #f0b90b;
+            color: #f0b90b;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 10px;
+            transition: all 0.3s;
+        }
+
+        .block-expand-btn:hover {
+            background: rgba(240, 185, 11, 0.3);
+        }
+
+        .block-transactions {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: none;
+        }
+
+        .block-item.expanded .block-transactions {
+            display: block;
+        }
+
+        .transaction-detail {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 8px;
+        }
+
+        .tx-hash {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: #8a8fa3;
+            word-break: break-all;
+            margin: 8px 0;
+        }
+
+        .tx-info-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 6px 0;
+            font-size: 13px;
+        }
+
+        .tx-label {
+            color: #8a8fa3;
+        }
+
+        .tx-value {
+            color: #eaecef;
+            font-weight: 500;
         }
 
         .block-hash {
@@ -346,6 +416,15 @@
                 </div>
                 <button class="btn btn-primary" onclick="searchAddress()">Buscar</button>
                 <div id="address-result"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Buscar Transacción por Hash</div>
+                <div class="input-group">
+                    <input type="text" id="search-tx-hash" class="input-field" placeholder="Hash de la transacción...">
+                </div>
+                <button class="btn btn-primary" onclick="searchTransactionByHash()">Buscar Transacción</button>
+                <div id="tx-hash-result"></div>
             </div>
         </div>
 
@@ -443,12 +522,18 @@
         async function loadChainInfo() {
             try {
                 const response = await fetch(`${API_BASE}/chain/info`);
+                if (!response.ok) {
+                    throw new Error(`Error HTTP: ${response.status}`);
+                }
                 const data = await response.json();
                 document.getElementById('total-blocks').textContent = data.length || 0;
                 document.getElementById('pending-tx').textContent = data.pending_transactions || 0;
                 document.getElementById('chain-status').textContent = data.is_valid ? '✓ Válida' : '✗ Inválida';
             } catch (error) {
                 console.error('Error cargando info:', error);
+                document.getElementById('total-blocks').textContent = 'Error';
+                document.getElementById('pending-tx').textContent = 'Error';
+                document.getElementById('chain-status').textContent = '✗ Error';
             }
         }
 
@@ -620,31 +705,62 @@
         async function loadBlocks() {
             try {
                 const response = await fetch(`${API_BASE}/chain`);
+                if (!response.ok) {
+                    throw new Error(`Error HTTP: ${response.status}`);
+                }
                 const data = await response.json();
                 
-                if (data.chain.length === 0) {
+                if (!data.chain || data.chain.length === 0) {
                     document.getElementById('blocks-list').innerHTML = 
                         '<div class="loading">No hay bloques aún</div>';
                     return;
                 }
 
-                let html = `<div style="margin-top: 20px;"><div class="stat-label">Total: ${data.length} bloques</div>`;
-                data.chain.slice().reverse().forEach(block => {
+                let html = `<div style="margin-top: 20px;"><div class="stat-label">Total: ${data.chain.length} bloques</div>`;
+                data.chain.slice().reverse().forEach((block, idx) => {
+                    const blockId = `block-${block.index}`;
                     html += `
-                        <div class="block-item">
+                        <div class="block-item" id="${blockId}" onclick="toggleBlock(${block.index})">
                             <div class="block-header">
-                                <div>
+                                <div style="flex: 1;">
                                     <strong>Bloque #${block.index}</strong>
                                     <div class="block-hash">Hash: ${block.hash}</div>
+                                    <div class="tx-details" style="margin-top: 8px;">
+                                        Transacciones: ${block.transactions.length} | 
+                                        Nonce: ${block.nonce} | 
+                                        ${new Date(block.timestamp).toLocaleString()}
+                                    </div>
                                 </div>
                                 <div>
-                                    <button class="btn btn-secondary copy-btn" onclick="copyToClipboard('${block.hash}')">Copiar Hash</button>
+                                    <button class="block-expand-btn" onclick="event.stopPropagation(); toggleBlock(${block.index})">
+                                        <span id="expand-icon-${block.index}">▼</span> Ver Transacciones
+                                    </button>
+                                    <button class="btn btn-secondary copy-btn" onclick="event.stopPropagation(); copyToClipboard('${block.hash}')">Copiar Hash</button>
                                 </div>
                             </div>
-                            <div class="tx-details">
-                                Transacciones: ${block.transactions.length} | 
-                                Nonce: ${block.nonce} | 
-                                ${new Date(block.timestamp).toLocaleString()}
+                            <div class="block-transactions" id="transactions-${block.index}">
+                                ${block.transactions.map(tx => `
+                                    <div class="transaction-detail">
+                                        <div class="tx-hash">Hash: ${tx.hash}</div>
+                                        <div class="tx-info-row">
+                                            <span class="tx-label">De:</span>
+                                            <span class="tx-value">${tx.sender}</span>
+                                        </div>
+                                        <div class="tx-info-row">
+                                            <span class="tx-label">Para:</span>
+                                            <span class="tx-value">${tx.recipient}</span>
+                                        </div>
+                                        <div class="tx-info-row">
+                                            <span class="tx-label">Monto:</span>
+                                            <span class="tx-value" style="color: #f0b90b; font-weight: bold;">${tx.amount_formatted || formatWei(tx.amount)}</span>
+                                        </div>
+                                        <div class="tx-info-row">
+                                            <span class="tx-label">Fecha:</span>
+                                            <span class="tx-value">${new Date(tx.timestamp).toLocaleString()}</span>
+                                        </div>
+                                        <button class="btn btn-secondary copy-btn" style="margin-top: 8px; font-size: 11px; padding: 4px 8px;" onclick="event.stopPropagation(); copyToClipboard('${tx.hash}')">Copiar Hash TX</button>
+                                    </div>
+                                `).join('')}
                             </div>
                         </div>
                     `;
@@ -657,14 +773,85 @@
             }
         }
 
+        function toggleBlock(blockIndex) {
+            const blockElement = document.getElementById(`block-${blockIndex}`);
+            const transactionsElement = document.getElementById(`transactions-${blockIndex}`);
+            const expandIcon = document.getElementById(`expand-icon-${blockIndex}`);
+            
+            if (blockElement.classList.contains('expanded')) {
+                blockElement.classList.remove('expanded');
+                expandIcon.textContent = '▼';
+            } else {
+                blockElement.classList.add('expanded');
+                expandIcon.textContent = '▲';
+            }
+        }
+
+        async function searchTransactionByHash() {
+            const txHash = document.getElementById('search-tx-hash').value.trim();
+            if (!txHash) {
+                alert('Por favor ingresa el hash de la transacción');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/transaction/${txHash}`);
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        document.getElementById('tx-hash-result').innerHTML = 
+                            '<div class="error">Transacción no encontrada</div>';
+                        return;
+                    }
+                    throw new Error(`Error HTTP: ${response.status}`);
+                }
+                const data = await response.json();
+                const tx = data.transaction;
+                
+                document.getElementById('tx-hash-result').innerHTML = `
+                    <div class="transaction-detail" style="margin-top: 20px;">
+                        <div class="tx-hash"><strong>Hash de la Transacción:</strong><br>${tx.hash}</div>
+                        <div class="tx-info-row">
+                            <span class="tx-label">Bloque:</span>
+                            <span class="tx-value">#${data.block_index} (Hash: ${data.block_hash.substring(0, 16)}...)</span>
+                        </div>
+                        <div class="tx-info-row">
+                            <span class="tx-label">Fecha del Bloque:</span>
+                            <span class="tx-value">${new Date(data.block_timestamp).toLocaleString()}</span>
+                        </div>
+                        <div class="tx-info-row">
+                            <span class="tx-label">De (Remitente):</span>
+                            <span class="tx-value">${tx.sender}</span>
+                        </div>
+                        <div class="tx-info-row">
+                            <span class="tx-label">Para (Destinatario):</span>
+                            <span class="tx-value">${tx.recipient}</span>
+                        </div>
+                        <div class="tx-info-row">
+                            <span class="tx-label">Monto:</span>
+                            <span class="tx-value" style="color: #f0b90b; font-weight: bold; font-size: 18px;">${tx.amount_formatted || formatWei(tx.amount)}</span>
+                        </div>
+                        <div class="tx-info-row">
+                            <span class="tx-label">Fecha de la Transacción:</span>
+                            <span class="tx-value">${new Date(tx.timestamp).toLocaleString()}</span>
+                        </div>
+                        <button class="btn btn-secondary copy-btn" style="margin-top: 12px;" onclick="copyToClipboard('${tx.hash}')">Copiar Hash</button>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('tx-hash-result').innerHTML = 
+                    `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
         function copyToClipboard(text) {
             navigator.clipboard.writeText(text).then(() => {
                 alert('Copiado al portapapeles');
             });
         }
 
-        // Cargar info inicial
+        // Cargar info inicial y bloques al cargar la página
         loadChainInfo();
+        loadBlocks();
     </script>
 </body>
 </html>

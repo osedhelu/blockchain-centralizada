@@ -21,8 +21,20 @@ class Transaction(BaseModel):
             data['amount'] = parse_amount(data['amount'])
         super().__init__(**data)
     
+    def calculate_hash(self) -> str:
+        """Calcula el hash único de la transacción"""
+        import hashlib
+        tx_string = json.dumps({
+            'sender': self.sender,
+            'recipient': self.recipient,
+            'amount': str(self.amount),
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None
+        }, sort_keys=True)
+        return hashlib.sha256(tx_string.encode()).hexdigest()
+    
     def to_dict(self) -> dict:
         return {
+            'hash': self.calculate_hash(),
             'sender': self.sender,
             'recipient': self.recipient,
             'amount': self.amount,  # Monto en wei (entero)

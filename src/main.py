@@ -5,6 +5,7 @@ from src.database import db
 from src.redis_client import redis_client
 from src.rabbitmq_client import rabbitmq_client
 from src.api import run_api
+from src.blockchain_service import get_blockchain_service
 
 
 def initialize_services():
@@ -56,6 +57,12 @@ def initialize_services():
                 sys.exit(1)
     
     print("\n✓ Todos los servicios inicializados correctamente")
+    
+    # Inicializar blockchain después de que todos los servicios estén listos
+    print("Inicializando blockchain...")
+    blockchain = get_blockchain_service()
+    print(f"✓ Blockchain inicializada: {len(blockchain.get_chain())} bloques")
+    
     print(f"✓ API iniciando en puerto {settings.BLOCKCHAIN_API_PORT}\n")
 
 
