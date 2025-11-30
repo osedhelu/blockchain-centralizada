@@ -1,16 +1,14 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from src.blockchain_service import get_blockchain_service
-
-# Función helper para obtener el servicio
-def blockchain_service():
-    return get_blockchain_service()
 from src.models import Transaction, Block
 from src.wallet import wallet_manager
 from src.utils import parse_amount, format_amount
+from src.auth import create_access_token, verify_token, verify_signature, create_auth_message
 from src.celery_app import celery_app
 from src.tasks import (
     mine_block_task,
@@ -23,6 +21,12 @@ import uvicorn
 from src.config import settings
 import os
 
+security = HTTPBearer()
+
+# Función helper para obtener el servicio
+def blockchain_service():
+    return get_blockchain_service()
+
 app = FastAPI(title="Blockchain Centralizada API", version="1.0.0")
 
 # Montar archivos estáticos para el explorador
@@ -31,10 +35,14 @@ if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
-class TransactionRequest(BaseModel):
-    sender: str
-    recipient: str
-    amount: float
+# Dependencia para obtener el usuario autenticado
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    """Obtiene la dirección de la wallet del token JWT"""
+    token = credentials.credentials
+    address = verify_token(token)
+    if address is None:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+    return address
 
 
 class MiningRequest(BaseModel):
@@ -52,6 +60,34 @@ class WalletImportRequest(BaseModel):
 
 class AddressTransactionsRequest(BaseModel):
     address: str
+
+
+class AuthRequest(BaseModel):
+    address: str
+    signature: str
+    message: str
+
+
+class AuthenticatedTransactionRequest(BaseModel):
+    recipient: str
+    amount: float
+
+
+class AuthRequest(BaseModel):
+    address: str
+    signature: str
+    message: str
+
+
+class TransactionRequest(BaseModel):
+    sender: str
+    recipient: str
+    amount: float
+
+
+class AuthenticatedTransactionRequest(BaseModel):
+    recipient: str
+    amount: float
 
 
 @app.get("/")
@@ -267,6 +303,129 @@ async def explorer():
     if os.path.exists(explorer_path):
         return FileResponse(explorer_path)
     raise HTTPException(status_code=404, detail="Explorador no encontrado")
+
+
+@app.post("/auth/login")
+async def login(auth_request: AuthRequest):
+    """Autentica una wallet usando MetaMask"""
+    try:
+        if not wallet_manager.verify_address(auth_request.address):
+            raise HTTPException(status_code=400, detail="Dirección inválida")
+        
+        # Verificar la firma del mensaje
+        if not verify_signature(auth_request.message, auth_request.signature, auth_request.address):
+            raise HTTPException(status_code=401, detail="Firma inválida")
+        
+        # Crear token de acceso
+        token = create_access_token(auth_request.address)
+        
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "address": auth_request.address,
+            "expires_in_hours": 24
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/auth/message/{address}")
+async def get_auth_message(address: str):
+    """Obtiene el mensaje que debe firmarse para autenticación"""
+    try:
+        if not wallet_manager.verify_address(address):
+            raise HTTPException(status_code=400, detail="Dirección inválida")
+        
+        message = create_auth_message(address)
+        return {
+            "message": message,
+            "address": address
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/transactions/transfer")
+async def transfer_funds(
+    transaction: AuthenticatedTransactionRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """Crea una transacción usando la wallet autenticada"""
+    try:
+        if not wallet_manager.verify_address(transaction.recipient):
+            raise HTTPException(status_code=400, detail="Dirección del destinatario inválida")
+        
+        # Usar la dirección autenticada como remitente
+        success = blockchain_service().add_transaction(
+            current_user,
+            transaction.recipient,
+            transaction.amount
+        )
+        
+        if success:
+            return {
+                "message": "Transacción creada exitosamente",
+                "transaction": {
+                    "sender": current_user,
+                    "recipient": transaction.recipient,
+                    "amount": transaction.amount
+                }
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Error al crear transacción")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/wallet/balance")
+async def get_my_balance(current_user: str = Depends(get_current_user)):
+    """Obtiene el balance de la wallet autenticada"""
+    try:
+        balance_wei = blockchain_service().get_balance(current_user)
+        return {
+            "address": current_user,
+            "balance": balance_wei,
+            "balance_formatted": format_amount(balance_wei)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/wallet/transactions")
+async def get_my_transactions(current_user: str = Depends(get_current_user)):
+    """Obtiene las transacciones de la wallet autenticada"""
+    try:
+        transactions = []
+        chain = blockchain_service().get_chain()
+        
+        for block in chain:
+            for tx in block.transactions:
+                if tx.sender.lower() == current_user.lower() or tx.recipient.lower() == current_user.lower():
+                    transactions.append({
+                        "block_index": block.index,
+                        "block_hash": block.hash,
+                        "timestamp": tx.timestamp.isoformat() if tx.timestamp else None,
+                        "sender": tx.sender,
+                        "recipient": tx.recipient,
+                        "amount": tx.amount,
+                        "amount_formatted": format_amount(tx.amount),
+                        "type": "sent" if tx.sender.lower() == current_user.lower() else "received",
+                        "hash": tx.calculate_hash()
+                    })
+        
+        return {
+            "address": current_user,
+            "transactions": transactions,
+            "count": len(transactions)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/wallet/generate")

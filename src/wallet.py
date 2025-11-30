@@ -102,9 +102,24 @@ class WalletManager:
     def verify_address(self, address: str) -> bool:
         """Verifica si una dirección es válida"""
         try:
-            return Account.is_valid_address(address)
-        except:
-            return False
+            from eth_utils import is_address
+            if not address or not isinstance(address, str):
+                return False
+            return is_address(address.strip())
+        except ImportError:
+            # Fallback: validación básica
+            if not address or not isinstance(address, str):
+                return False
+            address = address.strip()
+            if not address.startswith('0x'):
+                return False
+            if len(address) != 42:
+                return False
+            try:
+                int(address[2:], 16)
+                return True
+            except ValueError:
+                return False
 
 
 wallet_manager = WalletManager()

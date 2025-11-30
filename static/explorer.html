@@ -386,6 +386,10 @@
                     <div class="tab active" onclick="switchTab('explorer')">Explorador</div>
                     <div class="tab" onclick="switchTab('wallet')">Wallet</div>
                     <div class="tab" onclick="switchTab('blocks')">Bloques</div>
+                    <div class="tab" onclick="switchTab('metamask')">MetaMask</div>
+                </div>
+                <div id="wallet-status" style="margin-left: 20px; padding: 8px 16px; background: rgba(240, 185, 11, 0.2); border: 1px solid #f0b90b; border-radius: 6px; font-size: 12px;">
+                    <span id="wallet-connected">No conectado</span>
                 </div>
             </div>
         </div>
@@ -479,10 +483,67 @@
                 <div id="blocks-list"></div>
             </div>
         </div>
+
+        <!-- Tab: MetaMask -->
+        <div id="metamask" class="tab-content">
+            <div class="card">
+                <div class="card-title">Conectar MetaMask</div>
+                <div id="metamask-status" style="margin-bottom: 20px;">
+                    <div class="stat-label">Estado:</div>
+                    <div id="connection-status" class="stat-value">No conectado</div>
+                </div>
+                <button class="btn btn-primary" onclick="connectMetaMask()" id="connect-btn">Conectar MetaMask</button>
+                <button class="btn btn-secondary" onclick="disconnectMetaMask()" id="disconnect-btn" style="display: none; margin-left: 10px;">Desconectar</button>
+                <div id="metamask-info" style="margin-top: 20px;"></div>
+            </div>
+
+            <div class="card" id="authenticated-actions" style="display: none;">
+                <div class="card-title">Operaciones con tu Wallet</div>
+                
+                <div style="margin-bottom: 20px;">
+                    <div class="stat-label">Mi Balance</div>
+                    <button class="btn btn-secondary" onclick="getMyBalance()">Consultar Balance</button>
+                    <div id="my-balance-result" style="margin-top: 10px;"></div>
+                </div>
+
+                <div style="margin-bottom: 20px;">
+                    <div class="card-title" style="font-size: 16px; margin-bottom: 10px;">Transferir Fondos</div>
+                    <div class="input-group">
+                        <label class="input-label">Dirección Destinataria</label>
+                        <input type="text" id="transfer-recipient" class="input-field" placeholder="0x...">
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label">Monto</label>
+                        <input type="number" step="0.000000000000000001" id="transfer-amount" class="input-field" placeholder="0.0">
+                    </div>
+                    <button class="btn btn-primary" onclick="transferFunds()">Transferir</button>
+                    <div id="transfer-result" style="margin-top: 10px;"></div>
+                </div>
+
+                <div>
+                    <div class="card-title" style="font-size: 16px; margin-bottom: 10px;">Mis Transacciones</div>
+                    <button class="btn btn-secondary" onclick="getMyTransactions()">Ver Mis Transacciones</button>
+                    <div id="my-transactions-result" style="margin-top: 10px;"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
         const API_BASE = window.location.origin;
+        let authToken = null;
+        let connectedAddress = null;
+
+        // Verificar si hay token guardado
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedToken = localStorage.getItem('auth_token');
+            const savedAddress = localStorage.getItem('wallet_address');
+            if (savedToken && savedAddress) {
+                authToken = savedToken;
+                connectedAddress = savedAddress;
+                updateWalletStatus();
+            }
+        });
         
         // Función para convertir wei (entero) a formato legible con 18 decimales
         function formatWei(wei) {
@@ -852,9 +913,243 @@
             });
         }
 
+        async function connectMetaMask() {
+            if (typeof window.ethereum === 'undefined') {
+                alert('MetaMask no está instalado. Por favor instala MetaMask para continuar.');
+                return;
+            }
+
+            try {
+                // Solicitar acceso a las cuentas
+                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                const address = accounts[0];
+
+                if (!address) {
+                    alert('No se pudo obtener la dirección de la wallet');
+                    return;
+                }
+
+                // Obtener mensaje para firmar
+                const messageResponse = await fetch(`${API_BASE}/auth/message/${address}`);
+                const messageData = await messageResponse.json();
+
+                // Solicitar firma del mensaje
+                const signature = await window.ethereum.request({
+                    method: 'personal_sign',
+                    params: [messageData.message, address]
+                });
+
+                // Autenticarse con la firma
+                const authResponse = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        address: address,
+                        signature: signature,
+                        message: messageData.message
+                    })
+                });
+
+                if (!authResponse.ok) {
+                    const error = await authResponse.json();
+                    throw new Error(error.detail || 'Error en la autenticación');
+                }
+
+                const authData = await authResponse.json();
+                authToken = authData.access_token;
+                connectedAddress = address.toLowerCase();
+
+                // Guardar en localStorage
+                localStorage.setItem('auth_token', authToken);
+                localStorage.setItem('wallet_address', connectedAddress);
+
+                updateWalletStatus();
+                alert('MetaMask conectado exitosamente');
+            } catch (error) {
+                console.error('Error conectando MetaMask:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        function disconnectMetaMask() {
+            authToken = null;
+            connectedAddress = null;
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('wallet_address');
+            updateWalletStatus();
+            document.getElementById('authenticated-actions').style.display = 'none';
+            alert('Desconectado exitosamente');
+        }
+
+        function updateWalletStatus() {
+            const statusEl = document.getElementById('wallet-connected');
+            const connectBtn = document.getElementById('connect-btn');
+            const disconnectBtn = document.getElementById('disconnect-btn');
+            const statusContent = document.getElementById('connection-status');
+            const metamaskInfo = document.getElementById('metamask-info');
+
+            if (connectedAddress && authToken) {
+                statusEl.textContent = `Conectado: ${connectedAddress.substring(0, 6)}...${connectedAddress.substring(38)}`;
+                statusEl.style.color = '#0ecb81';
+                connectBtn.style.display = 'none';
+                disconnectBtn.style.display = 'inline-block';
+                statusContent.textContent = `Conectado: ${connectedAddress}`;
+                statusContent.style.color = '#0ecb81';
+                metamaskInfo.innerHTML = `
+                    <div class="wallet-info">
+                        <div class="stat-label">Dirección Conectada</div>
+                        <div class="wallet-address">${connectedAddress}</div>
+                    </div>
+                `;
+                document.getElementById('authenticated-actions').style.display = 'block';
+            } else {
+                statusEl.textContent = 'No conectado';
+                statusEl.style.color = '#8a8fa3';
+                connectBtn.style.display = 'inline-block';
+                disconnectBtn.style.display = 'none';
+                statusContent.textContent = 'No conectado';
+                statusContent.style.color = '#8a8fa3';
+                metamaskInfo.innerHTML = '';
+            }
+        }
+
+        async function getMyBalance() {
+            if (!authToken) {
+                alert('Por favor conecta MetaMask primero');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/wallet/balance`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Error obteniendo balance');
+                }
+
+                const data = await response.json();
+                document.getElementById('my-balance-result').innerHTML = `
+                    <div class="wallet-info">
+                        <div class="stat-label">Balance</div>
+                        <div class="balance-display">${data.balance_formatted}</div>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('my-balance-result').innerHTML = 
+                    `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function transferFunds() {
+            if (!authToken) {
+                alert('Por favor conecta MetaMask primero');
+                return;
+            }
+
+            const recipient = document.getElementById('transfer-recipient').value.trim();
+            const amount = parseFloat(document.getElementById('transfer-amount').value);
+
+            if (!recipient || !amount || amount <= 0) {
+                alert('Por favor completa todos los campos correctamente');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/transactions/transfer`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        recipient: recipient,
+                        amount: amount
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Error en la transferencia');
+                }
+
+                const data = await response.json();
+                document.getElementById('transfer-result').innerHTML = `
+                    <div class="success">
+                        ✓ Transacción creada exitosamente<br>
+                        De: ${data.transaction.sender}<br>
+                        Para: ${data.transaction.recipient}<br>
+                        Monto: ${data.transaction.amount}
+                    </div>
+                `;
+                
+                // Limpiar campos
+                document.getElementById('transfer-recipient').value = '';
+                document.getElementById('transfer-amount').value = '';
+            } catch (error) {
+                document.getElementById('transfer-result').innerHTML = 
+                    `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function getMyTransactions() {
+            if (!authToken) {
+                alert('Por favor conecta MetaMask primero');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/wallet/transactions`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Error obteniendo transacciones');
+                }
+
+                const data = await response.json();
+                
+                if (data.transactions.length === 0) {
+                    document.getElementById('my-transactions-result').innerHTML = 
+                        '<div class="loading">No hay transacciones</div>';
+                    return;
+                }
+
+                let html = `<div style="margin-top: 20px;"><div class="stat-label">Total: ${data.count} transacciones</div>`;
+                data.transactions.forEach(tx => {
+                    const amountClass = tx.type === 'sent' ? 'sent' : 'received';
+                    const sign = tx.type === 'sent' ? '-' : '+';
+                    html += `
+                        <div class="transaction-item">
+                            <div>
+                                <div class="tx-amount ${amountClass}">${sign}${tx.amount_formatted}</div>
+                                <div class="tx-details">
+                                    ${tx.type === 'sent' ? 'Para: ' + tx.recipient : 'De: ' + tx.sender}
+                                    <br>Bloque: ${tx.block_index} | ${new Date(tx.timestamp).toLocaleString()}
+                                    <br>Hash: ${tx.hash.substring(0, 16)}...
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                document.getElementById('my-transactions-result').innerHTML = html;
+            } catch (error) {
+                document.getElementById('my-transactions-result').innerHTML = 
+                    `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
         // Cargar info inicial y bloques al cargar la página
         loadChainInfo();
         loadBlocks();
+        updateWalletStatus();
     </script>
 </body>
 </html>
