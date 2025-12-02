@@ -21,6 +21,7 @@ export default function MetaMask({ apiBase }: MetaMaskProps) {
   const [transferRecipient, setTransferRecipient] = useState('')
   const [transferAmount, setTransferAmount] = useState('')
   const [transferResult, setTransferResult] = useState<any>(null)
+  const [ws, setWs] = useState<WebSocket | null>(null)
 
   useEffect(() => {
     const savedToken = localStorage.getItem('auth_token')
@@ -31,6 +32,53 @@ export default function MetaMask({ apiBase }: MetaMaskProps) {
     }
     checkMetaMaskAvailable()
   }, [])
+
+  useEffect(() => {
+    if (!connectedAddress) {
+      if (ws) {
+        ws.close()
+        setWs(null)
+      }
+      return
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    const wsUrl = `${protocol}://${window.location.host}/ws/wallet/${connectedAddress.toLowerCase()}`
+    const socket = new WebSocket(wsUrl)
+
+    socket.onopen = () => {
+      // Podríamos enviar un ping inicial si fuera necesario
+    }
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.type === 'balance_update' && data.address?.toLowerCase() === connectedAddress.toLowerCase()) {
+          setMyBalance({
+            address: data.address,
+            balance: data.balance,
+            balance_formatted: data.balance_formatted,
+          })
+        }
+      } catch (e) {
+        console.error('Error procesando mensaje de WebSocket:', e)
+      }
+    }
+
+    socket.onerror = (event) => {
+      console.error('Error en WebSocket:', event)
+    }
+
+    socket.onclose = () => {
+      setWs(null)
+    }
+
+    setWs(socket)
+
+    return () => {
+      socket.close()
+    }
+  }, [connectedAddress])
 
   const checkMetaMaskAvailable = () => {
     if (typeof window.ethereum === 'undefined') {
@@ -131,6 +179,10 @@ export default function MetaMask({ apiBase }: MetaMaskProps) {
     localStorage.removeItem('wallet_address')
     setMyBalance(null)
     setMyTransactions(null)
+    if (ws) {
+      ws.close()
+      setWs(null)
+    }
     alert('Desconectado exitosamente')
   }
 

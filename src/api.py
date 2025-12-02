@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -20,6 +20,11 @@ from src.tasks import (
 import uvicorn
 from src.config import settings
 import os
+import asyncio
+import threading
+
+from src.websocket_manager import ws_manager
+from src.rabbitmq_client import RabbitMQClient
 
 security = HTTPBearer()
 
@@ -41,6 +46,71 @@ if os.path.exists(frontend_dir):
     next_static_dir = os.path.join(frontend_dir, "_next")
     if os.path.exists(next_static_dir):
         app.mount("/_next", StaticFiles(directory=next_static_dir), name="nextjs_static")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Arranca un consumidor de RabbitMQ en un hilo separado para enviar
+    actualizaciones en tiempo real a través de WebSocket.
+    """
+    loop = asyncio.get_event_loop()
+
+    def consume_blocks():
+        client = RabbitMQClient()
+        try:
+            client.initialize()
+        except Exception as e:
+            print(f"Error inicializando RabbitMQ para WebSockets: {e}")
+            return
+
+        def handle_block(block_data: dict):
+            # Para cada bloque minado, notificamos a las direcciones afectadas
+            try:
+                from src.utils import format_amount
+                affected_addresses = set()
+                transactions = block_data.get("transactions", [])
+                for tx in transactions:
+                    sender = (tx.get("sender") or "").lower()
+                    recipient = (tx.get("recipient") or "").lower()
+                    if sender and sender != "sistema":
+                        affected_addresses.add(sender)
+                    if recipient:
+                        affected_addresses.add(recipient)
+
+                if not affected_addresses:
+                    return
+
+                blockchain = get_blockchain_service()
+
+                for address in affected_addresses:
+                    try:
+                        balance_wei = blockchain.get_balance(address)
+                        balance_formatted = format_amount(balance_wei)
+                    except Exception as e:
+                        print(f"Error obteniendo balance para {address}: {e}")
+                        continue
+
+                    message = {
+                        "type": "balance_update",
+                        "address": address,
+                        "balance": balance_wei,
+                        "balance_formatted": balance_formatted,
+                        "source": "block_mined",
+                        "block_index": block_data.get("index"),
+                        "block_hash": block_data.get("hash"),
+                    }
+                    asyncio.run_coroutine_threadsafe(
+                        ws_manager.send_personal_message(address, message),
+                        loop,
+                    )
+            except Exception as e:
+                print(f"Error manejando bloque para WebSockets: {e}")
+
+        client.consume_blocks(handle_block)
+
+    thread = threading.Thread(target=consume_blocks, daemon=True)
+    thread.start()
 
 
 # Dependencia para obtener el usuario autenticado
@@ -121,6 +191,32 @@ async def get_chain():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/ws/wallet/{address}")
+async def wallet_websocket(websocket: WebSocket, address: str):
+    """
+    WebSocket para actualizaciones de balance de una dirección específica.
+    El servidor enviará mensajes con:
+    {
+      "type": "balance_update",
+      "address": "...",
+      "balance": <int>,              # en wei
+      "balance_formatted": "<str>",  # formateado
+      "source": "block_mined",
+      "block_index": <int | null>,
+      "block_hash": "<str | null>"
+    }
+    """
+    await ws_manager.connect(address, websocket)
+    try:
+        while True:
+            # Por ahora ignoramos mensajes del cliente; se podría usar para pings
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        await ws_manager.disconnect(address, websocket)
+    except Exception:
+        await ws_manager.disconnect(address, websocket)
 
 
 @app.get("/chain/info")

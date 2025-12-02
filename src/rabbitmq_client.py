@@ -68,6 +68,29 @@ class RabbitMQClient:
             self.channel.start_consuming()
         except Exception as e:
             print(f"Error consumiendo transacciones: {e}")
+
+    def consume_blocks(self, callback: Callable) -> None:
+        """
+        Consume mensajes de la cola de bloques y ejecuta el callback por cada bloque.
+        Se espera que el callback reciba un dict con los datos del bloque.
+        """
+        try:
+            def on_message(ch, method, properties, body):
+                try:
+                    block_data = json.loads(body)
+                    callback(block_data)
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+                except Exception as e:
+                    print(f"Error procesando bloque desde RabbitMQ: {e}")
+                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+            self.channel.basic_consume(
+                queue='blocks',
+                on_message_callback=on_message
+            )
+            self.channel.start_consuming()
+        except Exception as e:
+            print(f"Error consumiendo bloques: {e}")
     
     def publish_block(self, block: Block) -> bool:
         try:
